@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from fitparse import FitFile
+import fitdecode
 from scipy.stats import linregress
 
 # ============================================
@@ -10,18 +10,24 @@ from scipy.stats import linregress
 # ============================================
 
 def load_activity(file):
-    """Charge un fichier FIT, GPX ou CSV."""
+    """Charge un fichier FIT, GPX ou CSV (robuste avec fitdecode)."""
     if file.name.endswith(".csv"):
         df = pd.read_csv(file)
+
     elif file.name.endswith(".fit"):
-        fitfile = FitFile(file)
         data = []
-        for record in fitfile.get_messages("record"):
-            record_data = {}
-            for field in record:
-                record_data[field.name] = field.value
-            data.append(record_data)
-        df = pd.DataFrame(data)
+        try:
+            with fitdecode.FitReader(file) as fit:
+                for frame in fit:
+                    if isinstance(frame, fitdecode.records.FitDataMessage) and frame.name == "record":
+                        record_data = {}
+                        for field in frame.fields:
+                            record_data[field.name] = field.value
+                        data.append(record_data)
+            df = pd.DataFrame(data)
+        except Exception as e:
+            raise ValueError(f"Erreur lecture FIT : {e}")
+
     elif file.name.endswith(".gpx"):
         import gpxpy
         gpx = gpxpy.parse(file)
@@ -39,7 +45,7 @@ def load_activity(file):
     else:
         raise ValueError("Format non supporté.")
 
-    # Nettoyage et validation
+    # Validation minimale
     if "heart_rate" not in df.columns:
         raise ValueError("Le fichier ne contient pas de données de fréquence cardiaque ('heart_rate').")
 
@@ -80,7 +86,7 @@ def get_interval(df, interval_number=4):
         if len(parts) >= interval_number:
             return parts[interval_number - 1]
         else:
-            st.warning("Impossible de détecter l’intervalle 4, tout le fichier est utilisé.")
+            st.warning("Impossible de détecter l’intervalle 4 ; tout le fichier est utilisé.")
             return df
 
 
@@ -142,38 +148,41 @@ if uploaded_file:
         st.error(f"Erreur lors du chargement du fichier : {e}")
         st.stop()
 
-    if "timestamp" not in df.columns:
-        st.error("Ce fichier ne contient pas de colonne 'timestamp' valide.")
+    # Vérification colonne temps
+    time_col_candidates = [c for c in df.columns if "time" in c.lower()]
+    if not time_col_candidates:
+        st.error("Impossible de détecter une colonne de temps ('timestamp' ou 'time').")
+        st.stop()
+    time_col = time_col_candidates[0]
+    df["timestamp"] = pd.to_datetime(df[time_col])
+
+    # Correction du décalage capteur
+    lag = st.slider("Correction du décalage capteur (s)", 0, 10, 0)
+    df["timestamp"] = df["timestamp"] - pd.to_timedelta(lag, unit="s")
+
+    # Lissage adaptatif
+    df, window_sec = smooth_hr(df)
+    st.info(f"Lissage automatique sur {window_sec} s selon la durée de l’effort.")
+
+    # Intervalle 4
+    interval_df = get_interval(df, interval_number=4)
+
+    if len(interval_df) < 10:
+        st.warning("Intervalle 4 non trouvé ou trop court.")
     else:
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        st.subheader("📊 Analyse de l’intervalle 4")
 
-        # Slider correction du lag capteur
-        lag = st.slider("Correction du décalage capteur (s)", 0, 10, 0)
-        df["timestamp"] = df["timestamp"] - pd.to_timedelta(lag, unit="s")
+        hr_stats = analyze_heart_rate(interval_df)
+        st.write(hr_stats)
 
-        # Lissage adaptatif
-        df, window_sec = smooth_hr(df)
-        st.info(f"Lissage automatique sur {window_sec} secondes (selon la durée de l’effort).")
-
-        # Intervalle 4
-        interval_df = get_interval(df, interval_number=4)
-
-        if len(interval_df) < 10:
-            st.warning("Intervalle 4 non trouvé ou trop court.")
-        else:
-            st.subheader("📊 Analyse de l’intervalle 4")
-
-            hr_stats = analyze_heart_rate(interval_df)
-            st.write(hr_stats)
-
-            # Graphique FC
-            fig, ax = plt.subplots()
-            ax.plot(interval_df["time_s"], interval_df["hr_smooth"], color="crimson", label="FC lissée")
-            ax.set_xlabel("Temps (s)")
-            ax.set_ylabel("Fréquence cardiaque (bpm)")
-            ax.set_title("Cinétique cardiaque")
-            ax.legend()
-            st.pyplot(fig)
+        # Graphique FC
+        fig, ax = plt.subplots()
+        ax.plot(interval_df["time_s"], interval_df["hr_smooth"], color="crimson", label="FC lissée")
+        ax.set_xlabel("Temps (s)")
+        ax.set_ylabel("Fréquence cardiaque (bpm)")
+        ax.set_title("Cinétique cardiaque")
+        ax.legend()
+        st.pyplot(fig)
 
 # ============================================
 # ⚡ Calculateur de vitesse critique
@@ -182,10 +191,9 @@ if uploaded_file:
 st.divider()
 st.subheader("⚡ Calculateur de vitesse critique (Critical Speed)")
 
-tests_data = st.text_area("Entre les données de tests (ex: '4000, 12:35; 5000, 15:45')")
+tests_data = st.text_area("Entre les données de tests (ex : '4000, 12:35; 5000, 15:45')")
 
 if tests_data:
     cv, d_prime = compute_critical_speed(tests_data)
     st.write(f"**Vitesse critique : {cv:.2f} km/h**")
     st.write(f"**D′ : {d_prime:.2f} m**")
-
