@@ -1,0 +1,7 @@
+streamlit
+pandas
+numpy
+fitparse
+matplotlib
+scipy
+gpxpy
