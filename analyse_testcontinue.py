@@ -64,24 +64,18 @@ def smooth_hr(df, time_col="timestamp", hr_col="heart_rate"):
     df = df.copy()
     df = df.sort_values(by=time_col).reset_index(drop=True)
 
-    # Conversion du temps
     df[time_col] = pd.to_datetime(df[time_col], errors="coerce")
     df = df.dropna(subset=[time_col])
 
-    # Création d’un temps continu (ignore les pauses)
     df["delta_t"] = df[time_col].diff().dt.total_seconds().fillna(0)
-
-    # Écarter les valeurs aberrantes dues à la pause montre
     median_step = np.median(df["delta_t"][df["delta_t"] > 0])
     if np.isnan(median_step) or median_step == 0:
         median_step = 1
     df.loc[df["delta_t"] > 2 * median_step, "delta_t"] = median_step
 
-    # Temps cumulatif d'effort continu
     df["time_s"] = df["delta_t"].cumsum()
     total_dur = df["time_s"].iloc[-1]
 
-    # Fenêtre adaptative selon la durée d'effort
     if total_dur < 360:
         window_sec = 5
     elif total_dur < 900:
@@ -89,16 +83,13 @@ def smooth_hr(df, time_col="timestamp", hr_col="heart_rate"):
     else:
         window_sec = 20
 
-    # Calcul du pas moyen
     step = np.median(np.diff(df["time_s"]))
     if step <= 0 or np.isnan(step):
         step = 1
     window_size = max(1, int(window_sec / step))
 
-    # Lissage de la fréquence cardiaque
     df["hr_smooth"] = df[hr_col].rolling(window_size, min_periods=1).mean()
 
-    # Compter les pauses détectées
     pauses = (df["delta_t"] > 2 * median_step).sum()
 
     return df, window_sec, total_dur, pauses
@@ -125,25 +116,6 @@ def analyze_heart_rate(df):
     }
 
 
-def compute_critical_speed(tests_text):
-    """Calcule la vitesse critique et D′ à partir de tests multiples."""
-    pairs = []
-    for item in tests_text.split(";"):
-        if not item.strip():
-            continue
-        d, t = item.strip().split(",")
-        distance = float(d)
-        mm, ss = map(int, t.strip().split(":"))
-        total_s = mm * 60 + ss
-        pairs.append((distance, total_s))
-    D = np.array([p[0] for p in pairs])
-    T = np.array([p[1] for p in pairs])
-    slope, intercept = np.polyfit(T, D, 1)
-    cv = slope * 3.6
-    d_prime = intercept
-    return cv, d_prime
-
-
 def parse_time_to_seconds(tstr):
     """Convertit un texte hh:mm:ss ou mm:ss en secondes."""
     parts = [int(p) for p in tstr.strip().split(":")]
@@ -164,82 +136,115 @@ st.set_page_config(page_title="Analyseur Endurance Nolio", layout="wide")
 
 st.title("🏃‍♂️ Analyseur de Tests d'Endurance Nolio")
 
-uploaded_file = st.file_uploader("Importe ton activité (FIT, GPX ou CSV)", type=["fit", "gpx", "csv"])
+# ===================================================
+# 🧩 Bloc 1 – Analyse du premier fichier
+# ===================================================
 
-if uploaded_file:
+st.header("🧪 Test 1")
+uploaded_file1 = st.file_uploader("Importe ton premier test (FIT, GPX ou CSV)", type=["fit", "gpx", "csv"], key="file1")
+
+if uploaded_file1:
     try:
-        df = load_activity(uploaded_file)
+        df1 = load_activity(uploaded_file1)
     except Exception as e:
-        st.error(f"Erreur lors du chargement du fichier : {e}")
+        st.error(f"Erreur fichier 1 : {e}")
         st.stop()
 
-    if "timestamp" not in df.columns:
-        st.error("Impossible de détecter une colonne de temps.")
-        st.stop()
+    df1["timestamp"] = pd.to_datetime(df1["timestamp"], errors="coerce")
+    df1 = df1.dropna(subset=["timestamp"])
 
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-    df = df.dropna(subset=["timestamp"])
+    lag1 = st.slider("Correction du décalage capteur (s) - Test 1", 0, 10, 0, key="lag1")
+    df1["timestamp"] = df1["timestamp"] - pd.to_timedelta(lag1, unit="s")
 
-    lag = st.slider("Correction du décalage capteur (s)", 0, 10, 0)
-    df["timestamp"] = df["timestamp"] - pd.to_timedelta(lag, unit="s")
+    df1, window_sec1, total_dur1, pauses1 = smooth_hr(df1)
+    st.info(f"[Test 1] Durée détectée : {total_dur1:.1f}s — Lissage : {window_sec1}s — Pauses : {pauses1}")
 
-    df, window_sec, total_dur, pauses = smooth_hr(df)
-    st.info(f"Durée détectée : {total_dur:.1f} s — Lissage sur {window_sec} s — Pauses : {pauses}")
-
-    # ============================
-    # 🎯 Sélection manuelle du segment hh:mm:ss
-    # ============================
-    st.subheader("🎯 Sélection du segment à analyser (format hh:mm:ss)")
-
+    st.subheader("🎯 Sélection du segment Test 1 (format hh:mm:ss)")
     col1, col2 = st.columns(2)
     with col1:
-        start_str = st.text_input("Début du segment", value="0:15:00")
+        start_str1 = st.text_input("Début du segment Test 1", value="0:00:00", key="start1")
     with col2:
-        end_str = st.text_input("Fin du segment", value="0:18:00")
+        end_str1 = st.text_input("Fin du segment Test 1", value="0:12:00", key="end1")
 
     try:
-        start_sec = parse_time_to_seconds(start_str)
-        end_sec = parse_time_to_seconds(end_str)
-    except Exception:
-        st.error("Format de temps invalide. Utilise hh:mm:ss (ex : 0:15:00).")
+        start_sec1 = parse_time_to_seconds(start_str1)
+        end_sec1 = parse_time_to_seconds(end_str1)
+    except:
+        st.error("Format temps invalide (hh:mm:ss).")
         st.stop()
 
-    if end_sec <= start_sec:
-        st.error("La fin doit être supérieure au début.")
-        st.stop()
+    if end_sec1 > df1["time_s"].max():
+        st.warning("⚠️ Fin au-delà des données disponibles (Test 1).")
+        end_sec1 = df1["time_s"].max()
 
-    if end_sec > df["time_s"].max():
-        st.warning("⚠️ Fin du segment supérieure à la durée du fichier. Analyse limitée.")
-        end_sec = df["time_s"].max()
+    interval_df1 = df1[(df1["time_s"] >= start_sec1) & (df1["time_s"] <= end_sec1)]
 
-    interval_df = df[(df["time_s"] >= start_sec) & (df["time_s"] <= end_sec)]
+    if len(interval_df1) > 10:
+        st.subheader(f"📊 Résultats Test 1 ({start_str1} → {end_str1})")
+        stats1 = analyze_heart_rate(interval_df1)
+        st.write(stats1)
 
-    if len(interval_df) < 10:
-        st.warning("Segment trop court ou inexistant.")
-    else:
-        st.subheader(f"📊 Analyse du segment {start_str} → {end_str}")
+        fig1, ax1 = plt.subplots()
+        ax1.plot(interval_df1["time_s"], interval_df1["hr_smooth"], color="crimson", label="FC Test 1")
+        ax1.set_xlabel("Temps (s)")
+        ax1.set_ylabel("Fréquence cardiaque (bpm)")
+        ax1.set_title("Cinétique cardiaque - Test 1")
+        ax1.legend()
+        st.pyplot(fig1)
 
-        hr_stats = analyze_heart_rate(interval_df)
-        st.write(hr_stats)
-
-        fig, ax = plt.subplots()
-        ax.plot(interval_df["time_s"], interval_df["hr_smooth"], color="crimson", label="FC lissée")
-        ax.set_xlabel("Temps (s)")
-        ax.set_ylabel("Fréquence cardiaque (bpm)")
-        ax.set_title(f"Cinétique cardiaque ({start_str} → {end_str})")
-        ax.legend()
-        st.pyplot(fig)
-
-# ============================================
-# ⚡ Calculateur de vitesse critique
-# ============================================
+# ===================================================
+# 🧩 Bloc 2 – Analyse du second fichier
+# ===================================================
 
 st.divider()
-st.subheader("⚡ Calculateur de vitesse critique (Critical Speed)")
+st.header("🧪 Test 2")
+uploaded_file2 = st.file_uploader("Importe ton second test (FIT, GPX ou CSV)", type=["fit", "gpx", "csv"], key="file2")
 
-tests_data = st.text_area("Entre les données de tests (ex : '4000, 12:35; 5000, 15:45')")
+if uploaded_file2:
+    try:
+        df2 = load_activity(uploaded_file2)
+    except Exception as e:
+        st.error(f"Erreur fichier 2 : {e}")
+        st.stop()
 
-if tests_data:
-    cv, d_prime = compute_critical_speed(tests_data)
-    st.write(f"**Vitesse critique : {cv:.2f} km/h**")
-    st.write(f"**D′ : {d_prime:.2f} m**")
+    df2["timestamp"] = pd.to_datetime(df2["timestamp"], errors="coerce")
+    df2 = df2.dropna(subset=["timestamp"])
+
+    lag2 = st.slider("Correction du décalage capteur (s) - Test 2", 0, 10, 0, key="lag2")
+    df2["timestamp"] = df2["timestamp"] - pd.to_timedelta(lag2, unit="s")
+
+    df2, window_sec2, total_dur2, pauses2 = smooth_hr(df2)
+    st.info(f"[Test 2] Durée détectée : {total_dur2:.1f}s — Lissage : {window_sec2}s — Pauses : {pauses2}")
+
+    st.subheader("🎯 Sélection du segment Test 2 (format hh:mm:ss)")
+    col3, col4 = st.columns(2)
+    with col3:
+        start_str2 = st.text_input("Début du segment Test 2", value="0:00:00", key="start2")
+    with col4:
+        end_str2 = st.text_input("Fin du segment Test 2", value="0:12:00", key="end2")
+
+    try:
+        start_sec2 = parse_time_to_seconds(start_str2)
+        end_sec2 = parse_time_to_seconds(end_str2)
+    except:
+        st.error("Format temps invalide (hh:mm:ss).")
+        st.stop()
+
+    if end_sec2 > df2["time_s"].max():
+        st.warning("⚠️ Fin au-delà des données disponibles (Test 2).")
+        end_sec2 = df2["time_s"].max()
+
+    interval_df2 = df2[(df2["time_s"] >= start_sec2) & (df2["time_s"] <= end_sec2)]
+
+    if len(interval_df2) > 10:
+        st.subheader(f"📊 Résultats Test 2 ({start_str2} → {end_str2})")
+        stats2 = analyze_heart_rate(interval_df2)
+        st.write(stats2)
+
+        fig2, ax2 = plt.subplots()
+        ax2.plot(interval_df2["time_s"], interval_df2["hr_smooth"], color="royalblue", label="FC Test 2")
+        ax2.set_xlabel("Temps (s)")
+        ax2.set_ylabel("Fréquence cardiaque (bpm)")
+        ax2.set_title("Cinétique cardiaque - Test 2")
+        ax2.legend()
+        st.pyplot(fig2)
