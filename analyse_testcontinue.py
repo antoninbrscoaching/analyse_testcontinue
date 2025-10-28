@@ -104,21 +104,6 @@ def smooth_hr(df, time_col="timestamp", hr_col="heart_rate"):
     return df, window_sec, total_dur, pauses
 
 
-def get_interval(df, interval_number=4):
-    """Extrait automatiquement l’intervalle n°4 s’il existe, sinon 4e quintile du fichier."""
-    if "lap" in df.columns:
-        return df[df["lap"] == interval_number]
-    elif "interval" in df.columns:
-        return df[df["interval"] == interval_number]
-    else:
-        parts = np.array_split(df, 5)
-        if len(parts) >= interval_number:
-            return parts[interval_number - 1]
-        else:
-            st.warning("Impossible de détecter l’intervalle 4 ; tout le fichier est utilisé.")
-            return df
-
-
 def analyze_heart_rate(df):
     """Analyse la FC moyenne, max, min et calcule la dérive via régression."""
     hr = df["hr_smooth"].dropna()
@@ -137,7 +122,7 @@ def analyze_heart_rate(df):
         "FC min (bpm)": round(min_hr, 1),
         "Dérive (bpm/min)": round(drift_per_min, 2),
         "Dérive (%/min)": round(drift_percent, 3),
-        "Durée effort (s)": round(df["time_s"].iloc[-1] - df["time_s"].iloc[0], 1),
+        "Durée segment (s)": round(df["time_s"].iloc[-1] - df["time_s"].iloc[0], 1),
     }
 
 
@@ -191,15 +176,25 @@ if uploaded_file:
 
     # Lissage adaptatif avec gestion des pauses
     df, window_sec, total_dur, pauses = smooth_hr(df)
-    st.info(f"Durée d’effort reconstituée : {total_dur:.1f} s — Lissage sur {window_sec} s — Pauses détectées : {pauses}")
+    st.info(f"Durée totale détectée : {total_dur:.1f} s — Lissage sur {window_sec} s — Pauses détectées : {pauses}")
 
-    # Intervalle 4
-    interval_df = get_interval(df, interval_number=4)
+    # ============================
+    # 🎯 Sélection manuelle du segment à analyser
+    # ============================
+    st.subheader("🎯 Sélection du segment à analyser")
+
+    max_minutes = round(total_dur / 60, 1)
+    start_min = st.number_input("Début du segment (en minutes)", min_value=0.0, max_value=max_minutes, value=0.0, step=0.5)
+    end_min = st.number_input("Fin du segment (en minutes)", min_value=start_min, max_value=max_minutes, value=min(12.0, max_minutes), step=0.5)
+
+    start_sec = start_min * 60
+    end_sec = end_min * 60
+    interval_df = df[(df["time_s"] >= start_sec) & (df["time_s"] <= end_sec)]
 
     if len(interval_df) < 10:
-        st.warning("Intervalle 4 non trouvé ou trop court.")
+        st.warning("Segment trop court ou inexistant.")
     else:
-        st.subheader("📊 Analyse de l’intervalle 4")
+        st.subheader(f"📊 Analyse du segment de {start_min:.1f} à {end_min:.1f} min")
 
         hr_stats = analyze_heart_rate(interval_df)
         st.write(hr_stats)
@@ -209,7 +204,7 @@ if uploaded_file:
         ax.plot(interval_df["time_s"], interval_df["hr_smooth"], color="crimson", label="FC lissée")
         ax.set_xlabel("Temps (s)")
         ax.set_ylabel("Fréquence cardiaque (bpm)")
-        ax.set_title("Cinétique cardiaque (temps d'effort continu)")
+        ax.set_title(f"Cinétique cardiaque ({start_min:.1f} à {end_min:.1f} min)")
         ax.legend()
         st.pyplot(fig)
 
