@@ -60,19 +60,28 @@ def load_activity(file):
 
 
 def smooth_hr(df, time_col="timestamp", hr_col="heart_rate"):
-    """Lisse la fréquence cardiaque avec une fenêtre adaptée à la durée du test."""
+    """Lisse la fréquence cardiaque avec un temps continu (ignore les pauses montre)."""
     df = df.copy()
     df = df.sort_values(by=time_col).reset_index(drop=True)
 
-    # Conversion du temps en datetime si ce n’est pas déjà fait
+    # Conversion du temps
     df[time_col] = pd.to_datetime(df[time_col], errors="coerce")
-    df = df.dropna(subset=[time_col])  # enlever les lignes invalides
+    df = df.dropna(subset=[time_col])
 
-    # Calcul du temps écoulé depuis le début
-    df["time_s"] = (df[time_col] - df[time_col].iloc[0]).dt.total_seconds()
-    total_dur = (df[time_col].iloc[-1] - df[time_col].iloc[0]).total_seconds()
+    # Création d’un temps continu (ignore les pauses)
+    df["delta_t"] = df[time_col].diff().dt.total_seconds().fillna(0)
 
-    # Fenêtre adaptative selon la durée réelle
+    # Écarter les valeurs aberrantes dues à la pause montre
+    median_step = np.median(df["delta_t"][df["delta_t"] > 0])
+    if np.isnan(median_step) or median_step == 0:
+        median_step = 1
+    df.loc[df["delta_t"] > 2 * median_step, "delta_t"] = median_step
+
+    # Temps cumulatif d'effort continu
+    df["time_s"] = df["delta_t"].cumsum()
+    total_dur = df["time_s"].iloc[-1]
+
+    # Fenêtre adaptative selon la durée d'effort
     if total_dur < 360:
         window_sec = 5
     elif total_dur < 900:
@@ -80,15 +89,19 @@ def smooth_hr(df, time_col="timestamp", hr_col="heart_rate"):
     else:
         window_sec = 20
 
-    # Calcul du pas moyen entre deux mesures
+    # Calcul du pas moyen
     step = np.median(np.diff(df["time_s"]))
     if step <= 0 or np.isnan(step):
         step = 1
     window_size = max(1, int(window_sec / step))
 
-    # Lissage sur un nombre de points (pas temporel)
+    # Lissage de la fréquence cardiaque
     df["hr_smooth"] = df[hr_col].rolling(window_size, min_periods=1).mean()
-    return df, window_sec
+
+    # Compter les pauses détectées (écarts > 2× médiane)
+    pauses = (df["delta_t"] > 2 * median_step).sum()
+
+    return df, window_sec, total_dur, pauses
 
 
 def get_interval(df, interval_number=4):
@@ -124,7 +137,7 @@ def analyze_heart_rate(df):
         "FC min (bpm)": round(min_hr, 1),
         "Dérive (bpm/min)": round(drift_per_min, 2),
         "Dérive (%/min)": round(drift_percent, 3),
-        "Durée (s)": round(df["time_s"].iloc[-1] - df["time_s"].iloc[0], 1),
+        "Durée effort (s)": round(df["time_s"].iloc[-1] - df["time_s"].iloc[0], 1),
     }
 
 
@@ -169,17 +182,16 @@ if uploaded_file:
         st.error("Impossible de détecter une colonne de temps ('timestamp' ou 'time').")
         st.stop()
 
-    # Conversion du temps et ajustement du décalage capteur
+    # Conversion du temps et correction du décalage capteur
     df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
     df = df.dropna(subset=["timestamp"])
 
     lag = st.slider("Correction du décalage capteur (s)", 0, 10, 0)
     df["timestamp"] = df["timestamp"] - pd.to_timedelta(lag, unit="s")
 
-    # Lissage adaptatif
-    df, window_sec = smooth_hr(df)
-    total_duration = (df["timestamp"].iloc[-1] - df["timestamp"].iloc[0]).total_seconds()
-    st.info(f"Durée réelle détectée : {total_duration:.1f} s — Lissage sur {window_sec} s.")
+    # Lissage adaptatif avec gestion des pauses
+    df, window_sec, total_dur, pauses = smooth_hr(df)
+    st.info(f"Durée d’effort reconstituée : {total_dur:.1f} s — Lissage sur {window_sec} s — Pauses détectées : {pauses}")
 
     # Intervalle 4
     interval_df = get_interval(df, interval_number=4)
@@ -197,7 +209,7 @@ if uploaded_file:
         ax.plot(interval_df["time_s"], interval_df["hr_smooth"], color="crimson", label="FC lissée")
         ax.set_xlabel("Temps (s)")
         ax.set_ylabel("Fréquence cardiaque (bpm)")
-        ax.set_title("Cinétique cardiaque")
+        ax.set_title("Cinétique cardiaque (temps d'effort continu)")
         ax.legend()
         st.pyplot(fig)
 
