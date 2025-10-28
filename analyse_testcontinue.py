@@ -98,7 +98,7 @@ def smooth_hr(df, time_col="timestamp", hr_col="heart_rate"):
     # Lissage de la fréquence cardiaque
     df["hr_smooth"] = df[hr_col].rolling(window_size, min_periods=1).mean()
 
-    # Compter les pauses détectées (écarts > 2× médiane)
+    # Compter les pauses détectées
     pauses = (df["delta_t"] > 2 * median_step).sum()
 
     return df, window_sec, total_dur, pauses
@@ -111,9 +111,8 @@ def analyze_heart_rate(df):
     max_hr = hr.max()
     min_hr = hr.min()
 
-    # dérive linéaire FC(t)
     slope, _, _, _, _ = linregress(df["time_s"], df["hr_smooth"])
-    drift_per_min = slope * 60      # bpm/min
+    drift_per_min = slope * 60
     drift_percent = (drift_per_min / mean_hr) * 100
 
     return {
@@ -140,9 +139,21 @@ def compute_critical_speed(tests_text):
     D = np.array([p[0] for p in pairs])
     T = np.array([p[1] for p in pairs])
     slope, intercept = np.polyfit(T, D, 1)
-    cv = slope * 3.6   # m/s -> km/h
+    cv = slope * 3.6
     d_prime = intercept
     return cv, d_prime
+
+
+def parse_time_to_seconds(tstr):
+    """Convertit un texte hh:mm:ss ou mm:ss en secondes."""
+    parts = [int(p) for p in tstr.strip().split(":")]
+    if len(parts) == 3:
+        h, m, s = parts
+    elif len(parts) == 2:
+        h, m, s = 0, parts[0], parts[1]
+    else:
+        h, m, s = 0, 0, parts[0]
+    return h * 3600 + m * 60 + s
 
 
 # ============================================
@@ -162,60 +173,60 @@ if uploaded_file:
         st.error(f"Erreur lors du chargement du fichier : {e}")
         st.stop()
 
-    # Vérification colonne temps
     if "timestamp" not in df.columns:
-        st.error("Impossible de détecter une colonne de temps ('timestamp' ou 'time').")
+        st.error("Impossible de détecter une colonne de temps.")
         st.stop()
 
-    # Conversion du temps et correction du décalage capteur
     df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
     df = df.dropna(subset=["timestamp"])
 
     lag = st.slider("Correction du décalage capteur (s)", 0, 10, 0)
     df["timestamp"] = df["timestamp"] - pd.to_timedelta(lag, unit="s")
 
-    # Lissage adaptatif avec gestion des pauses
     df, window_sec, total_dur, pauses = smooth_hr(df)
-    st.info(f"Durée totale détectée : {total_dur:.1f} s — Lissage sur {window_sec} s — Pauses détectées : {pauses}")
+    st.info(f"Durée détectée : {total_dur:.1f} s — Lissage sur {window_sec} s — Pauses : {pauses}")
 
     # ============================
-    # 🎯 Sélection manuelle du segment à analyser (libre)
+    # 🎯 Sélection manuelle du segment hh:mm:ss
     # ============================
-    st.subheader("🎯 Sélection du segment à analyser")
+    st.subheader("🎯 Sélection du segment à analyser (format hh:mm:ss)")
 
-    max_minutes_detected = round(total_dur / 60, 1)
-    st.caption(f"Durée détectée dans le fichier : {max_minutes_detected:.1f} minutes (tu peux choisir au-delà).")
+    col1, col2 = st.columns(2)
+    with col1:
+        start_str = st.text_input("Début du segment", value="0:15:00")
+    with col2:
+        end_str = st.text_input("Fin du segment", value="0:18:00")
 
-    # Autoriser librement de 0 à 180 minutes
-    start_min = st.number_input("Début du segment (en minutes)", min_value=0.0, max_value=180.0, value=0.0, step=0.5)
-    end_min = st.number_input("Fin du segment (en minutes)", min_value=start_min, max_value=180.0, value=12.0, step=0.5)
+    try:
+        start_sec = parse_time_to_seconds(start_str)
+        end_sec = parse_time_to_seconds(end_str)
+    except Exception:
+        st.error("Format de temps invalide. Utilise hh:mm:ss (ex : 0:15:00).")
+        st.stop()
 
-    # Conversion en secondes
-    start_sec = start_min * 60
-    end_sec = end_min * 60
+    if end_sec <= start_sec:
+        st.error("La fin doit être supérieure au début.")
+        st.stop()
 
-    # ⚠️ Si l'utilisateur dépasse la durée réelle, on limite
     if end_sec > df["time_s"].max():
-        st.warning("⚠️ La fin du segment dépasse la durée réelle du fichier FIT. L'analyse sera limitée aux données disponibles.")
+        st.warning("⚠️ Fin du segment supérieure à la durée du fichier. Analyse limitée.")
         end_sec = df["time_s"].max()
 
-    # Extraction de l'intervalle
     interval_df = df[(df["time_s"] >= start_sec) & (df["time_s"] <= end_sec)]
 
     if len(interval_df) < 10:
         st.warning("Segment trop court ou inexistant.")
     else:
-        st.subheader(f"📊 Analyse du segment de {start_min:.1f} à {end_min:.1f} min")
+        st.subheader(f"📊 Analyse du segment {start_str} → {end_str}")
 
         hr_stats = analyze_heart_rate(interval_df)
         st.write(hr_stats)
 
-        # Graphique FC
         fig, ax = plt.subplots()
         ax.plot(interval_df["time_s"], interval_df["hr_smooth"], color="crimson", label="FC lissée")
         ax.set_xlabel("Temps (s)")
         ax.set_ylabel("Fréquence cardiaque (bpm)")
-        ax.set_title(f"Cinétique cardiaque ({start_min:.1f} à {end_min:.1f} min)")
+        ax.set_title(f"Cinétique cardiaque ({start_str} → {end_str})")
         ax.legend()
         st.pyplot(fig)
 
