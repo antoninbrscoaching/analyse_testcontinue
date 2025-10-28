@@ -45,6 +45,12 @@ def load_activity(file):
     else:
         raise ValueError("Format non supporté.")
 
+    # Harmoniser le nom de la colonne de temps
+    for c in df.columns:
+        if "time" in c.lower():
+            df.rename(columns={c: "timestamp"}, inplace=True)
+            break
+
     # Validation minimale
     if "heart_rate" not in df.columns:
         raise ValueError("Le fichier ne contient pas de données de fréquence cardiaque ('heart_rate').")
@@ -56,23 +62,31 @@ def load_activity(file):
 def smooth_hr(df, time_col="timestamp", hr_col="heart_rate"):
     """Lisse la fréquence cardiaque avec une fenêtre adaptée à la durée du test."""
     df = df.copy()
-    df["time_s"] = (df[time_col] - df[time_col].iloc[0]).dt.total_seconds()
-    total_dur = df["time_s"].iloc[-1] - df["time_s"].iloc[0]
+    df = df.sort_values(by=time_col).reset_index(drop=True)
 
-    # Fenêtre adaptative selon la durée
-    if total_dur < 360:      # < 6 min
+    # Conversion du temps en datetime si ce n’est pas déjà fait
+    df[time_col] = pd.to_datetime(df[time_col], errors="coerce")
+    df = df.dropna(subset=[time_col])  # enlever les lignes invalides
+
+    # Calcul du temps écoulé depuis le début
+    df["time_s"] = (df[time_col] - df[time_col].iloc[0]).dt.total_seconds()
+    total_dur = (df[time_col].iloc[-1] - df[time_col].iloc[0]).total_seconds()
+
+    # Fenêtre adaptative selon la durée réelle
+    if total_dur < 360:
         window_sec = 5
-    elif total_dur < 900:    # < 15 min
+    elif total_dur < 900:
         window_sec = 10
     else:
         window_sec = 20
 
-    # ✅ Nouvelle méthode : fenêtre en nombre de points, pas en secondes
-    step = np.median(np.diff(df["time_s"]))  # intervalle moyen entre points
+    # Calcul du pas moyen entre deux mesures
+    step = np.median(np.diff(df["time_s"]))
     if step <= 0 or np.isnan(step):
-        step = 1  # valeur de secours
+        step = 1
     window_size = max(1, int(window_sec / step))
 
+    # Lissage sur un nombre de points (pas temporel)
     df["hr_smooth"] = df[hr_col].rolling(window_size, min_periods=1).mean()
     return df, window_sec
 
@@ -151,20 +165,21 @@ if uploaded_file:
         st.stop()
 
     # Vérification colonne temps
-    time_col_candidates = [c for c in df.columns if "time" in c.lower()]
-    if not time_col_candidates:
+    if "timestamp" not in df.columns:
         st.error("Impossible de détecter une colonne de temps ('timestamp' ou 'time').")
         st.stop()
-    time_col = time_col_candidates[0]
-    df["timestamp"] = pd.to_datetime(df[time_col])
 
-    # Correction du décalage capteur
+    # Conversion du temps et ajustement du décalage capteur
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    df = df.dropna(subset=["timestamp"])
+
     lag = st.slider("Correction du décalage capteur (s)", 0, 10, 0)
     df["timestamp"] = df["timestamp"] - pd.to_timedelta(lag, unit="s")
 
     # Lissage adaptatif
     df, window_sec = smooth_hr(df)
-    st.info(f"Lissage automatique sur {window_sec} s selon la durée de l’effort.")
+    total_duration = (df["timestamp"].iloc[-1] - df["timestamp"].iloc[0]).total_seconds()
+    st.info(f"Durée réelle détectée : {total_duration:.1f} s — Lissage sur {window_sec} s.")
 
     # Intervalle 4
     interval_df = get_interval(df, interval_number=4)
