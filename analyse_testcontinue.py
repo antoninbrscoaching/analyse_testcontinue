@@ -67,10 +67,13 @@ def smooth_hr(df, time_col="timestamp", hr_col="heart_rate"):
     else:
         window_sec = 20
 
-    df = df.set_index("time_s")
-    df["hr_smooth"] = df[hr_col].rolling(f"{window_sec}s", min_periods=1).mean()
-    df = df.reset_index()
+    # ✅ Nouvelle méthode : fenêtre en nombre de points, pas en secondes
+    step = np.median(np.diff(df["time_s"]))  # intervalle moyen entre points
+    if step <= 0 or np.isnan(step):
+        step = 1  # valeur de secours
+    window_size = max(1, int(window_sec / step))
 
+    df["hr_smooth"] = df[hr_col].rolling(window_size, min_periods=1).mean()
     return df, window_sec
 
 
@@ -81,7 +84,6 @@ def get_interval(df, interval_number=4):
     elif "interval" in df.columns:
         return df[df["interval"] == interval_number]
     else:
-        total_len = len(df)
         parts = np.array_split(df, 5)
         if len(parts) >= interval_number:
             return parts[interval_number - 1]
