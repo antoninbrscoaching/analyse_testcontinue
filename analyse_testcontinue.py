@@ -179,16 +179,27 @@ if uploaded_file:
     st.info(f"Durée totale détectée : {total_dur:.1f} s — Lissage sur {window_sec} s — Pauses détectées : {pauses}")
 
     # ============================
-    # 🎯 Sélection manuelle du segment à analyser
+    # 🎯 Sélection manuelle du segment à analyser (libre)
     # ============================
     st.subheader("🎯 Sélection du segment à analyser")
 
-    max_minutes = round(total_dur / 60, 1)
-    start_min = st.number_input("Début du segment (en minutes)", min_value=0.0, max_value=max_minutes, value=0.0, step=0.5)
-    end_min = st.number_input("Fin du segment (en minutes)", min_value=start_min, max_value=max_minutes, value=min(12.0, max_minutes), step=0.5)
+    max_minutes_detected = round(total_dur / 60, 1)
+    st.caption(f"Durée détectée dans le fichier : {max_minutes_detected:.1f} minutes (tu peux choisir au-delà).")
 
+    # Autoriser librement de 0 à 180 minutes
+    start_min = st.number_input("Début du segment (en minutes)", min_value=0.0, max_value=180.0, value=0.0, step=0.5)
+    end_min = st.number_input("Fin du segment (en minutes)", min_value=start_min, max_value=180.0, value=12.0, step=0.5)
+
+    # Conversion en secondes
     start_sec = start_min * 60
     end_sec = end_min * 60
+
+    # ⚠️ Si l'utilisateur dépasse la durée réelle, on limite
+    if end_sec > df["time_s"].max():
+        st.warning("⚠️ La fin du segment dépasse la durée réelle du fichier FIT. L'analyse sera limitée aux données disponibles.")
+        end_sec = df["time_s"].max()
+
+    # Extraction de l'intervalle
     interval_df = df[(df["time_s"] >= start_sec) & (df["time_s"] <= end_sec)]
 
     if len(interval_df) < 10:
