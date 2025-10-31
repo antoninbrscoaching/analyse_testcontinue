@@ -1,7 +1,6 @@
-streamlit
-pandas
-numpy
-fitdecode
-matplotlib
-scipy
-gpxpy
+streamlit>=1.40.0
+pandas>=2.2.0
+numpy>=1.26.0
+matplotlib>=3.9.0
+scipy>=1.11.0
+fitdecode>=0.10.0
