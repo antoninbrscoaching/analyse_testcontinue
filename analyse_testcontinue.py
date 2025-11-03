@@ -2,30 +2,41 @@
 # 🏃‍♂️ Analyse Endurance (Tests fusionnés) + VC + Index de cinétique
 # + Entraînement (multi-séances + IC par intervalle)
 # + Superposition FC / Allure / Puissance (double axe Y)
+# + Export PDF (uniquement)
 # ============================
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
+from matplotlib.backends.backend_pdf import PdfPages
 from scipy.stats import linregress
 import fitdecode
 import math
 from io import BytesIO
 from datetime import date
 import matplotlib as mpl
-from matplotlib.ticker import FuncFormatter
 
 # =============== UI / THEME =================
-st.set_page_config(page_title="Analyse Endurance + VC", layout="wide")
+st.set_page_config(page_title="Analyse Endurance + VC (PDF)", layout="wide")
 
-# Palette rouge/noir/blanc
-COLOR_RED = "#d21f3c"
+# Palette rouge/noir/blanc (fond clair) + nuances
+COLOR_RED_T1 = "#d21f3c"   # FC Test 1
+COLOR_RED_T2 = "#8b0a1a"   # FC Test 2
+COLOR_RED_SES = "#f57c92"  # FC Entraînement
+
+COLOR_BLUE_T1 = "#0066cc"  # Allure Test 1
+COLOR_BLUE_T2 = "#003366"  # Allure Test 2
+COLOR_BLUE_SES = "#66a3ff" # Allure Entraînement
+
+COLOR_ORANGE_T1 = "#ff8c00"  # Puissance Test 1
+COLOR_ORANGE_T2 = "#cc6600"  # Puissance Test 2
+COLOR_ORANGE_SES = "#ffb84d" # Puissance Entraînement
+
 COLOR_BLACK = "#111111"
 COLOR_WHITE = "#ffffff"
 COLOR_GREY = "#6b7280"
-COLOR_BLUE = "#1f77b4"   # allure
-COLOR_ORANGE = "#ff7f0e" # puissance
 BG_PANEL = "#fafafa"
 
 st.markdown("""
@@ -100,12 +111,21 @@ def load_activity(file):
 
     df = df.dropna(subset=["heart_rate"]).reset_index(drop=True)
 
-    # Normalisation éventuelle de types numériques
+    # Normaliser types
     for c in ["heart_rate", "speed", "enhanced_speed", "power", "distance", "lat", "lon"]:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
 
     return df
+
+
+def get_speed_col(df):
+    """Retourne le nom de la vitesse (m/s) si dispo."""
+    if "enhanced_speed" in df.columns:
+        return "enhanced_speed"
+    if "speed" in df.columns:
+        return "speed"
+    return None
 
 
 def smooth_hr(df, time_col="timestamp", hr_col="heart_rate"):
@@ -119,13 +139,12 @@ def smooth_hr(df, time_col="timestamp", hr_col="heart_rate"):
     median_step = np.median(df["delta_t"][df["delta_t"] > 0])
     if np.isnan(median_step) or median_step == 0:
         median_step = 1
-    # cap pauses
     df.loc[df["delta_t"] > 2 * median_step, "delta_t"] = median_step
 
     df["time_s"] = df["delta_t"].cumsum()
     total_dur = df["time_s"].iloc[-1]
 
-    # fenêtre lissage
+    # Fenêtre lissage
     if total_dur < 360:
         window_sec = 5
     elif total_dur < 900:
@@ -138,10 +157,9 @@ def smooth_hr(df, time_col="timestamp", hr_col="heart_rate"):
         step = 1
     window_size = max(1, int(window_sec / step))
 
-    # Lissage FC (obligatoire)
+    # Lissages
     df["hr_smooth"] = df[hr_col].rolling(window_size, min_periods=1).mean()
 
-    # Lissage puissance/ vitesse si présents
     speed_col = get_speed_col(df)
     if speed_col:
         df["speed_smooth"] = df[speed_col].rolling(window_size, min_periods=1).mean()
@@ -150,15 +168,6 @@ def smooth_hr(df, time_col="timestamp", hr_col="heart_rate"):
 
     pauses = (df["delta_t"] > 2 * median_step).sum()
     return df, window_sec, total_dur, pauses
-
-
-def get_speed_col(df):
-    """Retourne le nom de la colonne vitesse (m/s) si dispo."""
-    if "enhanced_speed" in df.columns:
-        return "enhanced_speed"
-    if "speed" in df.columns:
-        return "speed"
-    return None
 
 
 def analyze_heart_rate(df):
@@ -245,15 +254,6 @@ def segment_distance_m(df_seg):
     return 0.0
 
 
-def format_pace_min_per_km_from_speed(speed_ms):
-    """Retourne (min, sec, valeur_min_km) pour une vitesse en m/s."""
-    if speed_ms is None or speed_ms <= 0 or not math.isfinite(speed_ms):
-        return None
-    min_per_km = 1000.0 / speed_ms / 60.0  # minutes par km
-    total_seconds = int(round(min_per_km * 60.0))
-    return total_seconds // 60, total_seconds % 60, min_per_km
-
-
 def format_pace_min_per_km(v_kmh):
     if v_kmh <= 0 or not math.isfinite(v_kmh):
         return None
@@ -262,14 +262,20 @@ def format_pace_min_per_km(v_kmh):
     return total_seconds // 60, total_seconds % 60, min_per_km
 
 
-def fig_to_png_bytes(fig):
+def fig_to_pdf_bytes(figs):
+    """Prend un fig (ou une liste de figs) et renvoie un PDF en mémoire."""
+    if not isinstance(figs, (list, tuple)):
+        figs = [figs]
     buf = BytesIO()
-    fig.savefig(buf, format="png", dpi=200, bbox_inches="tight")
+    with PdfPages(buf) as pdf:
+        for f in figs:
+            f.tight_layout()
+            pdf.savefig(f, bbox_inches="tight")
     buf.seek(0)
     return buf
 
 
-# ====== Interprétation Index de cinétique (barème & recommandations) ======
+# ====== IC & Rapport ======
 
 def compute_index_cinetique(drift_short_pct, drift_long_pct, drift_short_bpm, drift_long_bpm):
     """
@@ -323,151 +329,17 @@ def compute_index_cinetique(drift_short_pct, drift_long_pct, drift_short_bpm, dr
     return float(IC), unite, msg, None, reco
 
 
-def render_full_report_png(
-    title: str,
-    date1, date2,
-    interval_df1, start_sec1, stats1, dist1_m, t1_s,
-    interval_df2, start_sec2, stats2, dist2_m, t2_s,
-    vc_dict, IC_value, IC_unite, IC_msg, IC_reco
-):
-    """Rapport PNG — Tests, Comparatif, VC & IC, Prescription (sans courbes relatives)."""
-    mpl.rcParams.update({
-        "axes.edgecolor": COLOR_BLACK,
-        "axes.labelcolor": COLOR_BLACK,
-        "xtick.color": COLOR_BLACK,
-        "ytick.color": COLOR_BLACK,
-        "text.color": COLOR_BLACK,
-        "figure.facecolor": COLOR_WHITE,
-        "axes.facecolor": COLOR_WHITE,
-        "savefig.facecolor": COLOR_WHITE,
-        "font.size": 10
-    })
-
-    fig = plt.figure(figsize=(10.5, 16), dpi=170, constrained_layout=False)
-    gs = fig.add_gridspec(7, 2,
-                          height_ratios=[0.55, 1.15, 1.15, 1.15, 1.0, 0.95, 1.10],
-                          width_ratios=[1, 1],
-                          hspace=1.0, wspace=0.7)
-
-    # En-tête
-    ax_title = fig.add_subplot(gs[0, :]); ax_title.axis("off")
-    ax_title.add_patch(plt.Rectangle((0,0),1,1, color=BG_PANEL, transform=ax_title.transAxes))
-    ax_title.text(0.02, 0.80, title, fontsize=22, fontweight="bold", color=COLOR_BLACK, va="top")
-    ax_title.text(0.02, 0.50, f"Test 1 : {date1}   •   Test 2 : {date2}", fontsize=11, color=COLOR_GREY)
-    ax_title.text(0.02, 0.25, "FC, Dérive, Distances, VC, Index de cinétique, Prescription", fontsize=10, color=COLOR_GREY)
-
-    # Graph Test 1 (bpm)
-    ax1 = fig.add_subplot(gs[1, :])
-    ax1.set_title("Cinétique cardiaque — Test 1", fontsize=12, fontweight="bold")
-    if interval_df1 is not None and len(interval_df1) > 1:
-        ax1.plot(interval_df1["time_s"] - start_sec1, interval_df1["hr_smooth"], linewidth=2, color=COLOR_RED, label="FC Test 1")
-    ax1.set_xlabel("Temps segment (s)"); ax1.set_ylabel("Fréquence cardiaque (bpm)"); ax1.grid(True, alpha=0.15)
-
-    # Graph Test 2 (bpm)
-    ax2 = fig.add_subplot(gs[2, :])
-    ax2.set_title("Cinétique cardiaque — Test 2", fontsize=12, fontweight="bold")
-    if interval_df2 is not None and len(interval_df2) > 1:
-        ax2.plot(interval_df2["time_s"] - start_sec2, interval_df2["hr_smooth"], linewidth=2, color=COLOR_BLACK, label="FC Test 2")
-    ax2.set_xlabel("Temps segment (s)"); ax2.set_ylabel("Fréquence cardiaque (bpm)"); ax2.grid(True, alpha=0.15)
-
-    # Graph Comparatif (bpm)
-    ax3 = fig.add_subplot(gs[3, :])
-    ax3.set_title("Comparatif des cinétiques (segments centrés en t=0)", fontsize=12, fontweight="bold")
-    if interval_df1 is not None and len(interval_df1) > 1:
-        ax3.plot(interval_df1["time_s"] - interval_df1["time_s"].iloc[0],
-                 interval_df1["hr_smooth"], linewidth=2, color=COLOR_RED, label="Test 1")
-    if interval_df2 is not None and len(interval_df2) > 1:
-        ax3.plot(interval_df2["time_s"] - interval_df2["time_s"].iloc[0],
-                 interval_df2["hr_smooth"], linewidth=2, color=COLOR_BLACK, label="Test 2")
-    ax3.set_xlabel("Temps segment (s)"); ax3.set_ylabel("Fréquence cardiaque (bpm)"); ax3.grid(True, alpha=0.15); ax3.legend(frameon=False)
-
-    # Cartes stats Test 1 & Test 2
-    ax4 = fig.add_subplot(gs[4, 0]); ax5 = fig.add_subplot(gs[4, 1])
-    for ax in (ax4, ax5):
-        ax.axis("off"); ax.add_patch(plt.Rectangle((0,0),1,1, color=BG_PANEL, transform=ax.transAxes))
-
-    def write_card(ax, title_card, stats, dist_m, t_s):
-        ax.text(0.03, 0.90, title_card, fontsize=12, fontweight="bold")
-        if stats is not None and t_s:
-            v_kmh = 3.6 * (dist_m / t_s) if t_s > 0 else 0.0
-            lines = [
-                f"FC moy : {stats['FC moyenne (bpm)']} bpm",
-                f"FC max : {stats['FC max (bpm)']} bpm",
-                f"Dérive : {stats['Dérive (bpm/min)']} bpm/min",
-                f"Dérive : {stats['Dérive (%/min)']} %/min" if stats['Dérive (%/min)'] is not None else "Dérive %/min : —",
-                f"Durée  : {stats['Durée segment (s)']} s",
-                f"Distance : {dist_m:.1f} m",
-                f"Vitesse moy : {v_kmh:.2f} km/h"
-            ]
-            ax.text(0.05, 0.80, "\n".join(lines), fontsize=11, color=COLOR_BLACK)
-        else:
-            ax.text(0.05, 0.80, "—", fontsize=11, color=COLOR_GREY)
-
-    # VC + IC
-    ax6L = fig.add_subplot(gs[5, 0]); ax6R = fig.add_subplot(gs[5, 1])
-    for ax in (ax6L, ax6R):
-        ax.axis("off"); ax.add_patch(plt.Rectangle((0,0),1,1, color=BG_PANEL, transform=ax.transAxes))
-
-    # Prescription
-    ax7 = fig.add_subplot(gs[6, :]); ax7.axis("off")
-    ax7.add_patch(plt.Rectangle((0,0),1,1, color=BG_PANEL, transform=ax7.transAxes))
-
-    # Cartes Stats :
-    write_card(ax4, "Résumé Test 1", stats1, dist1_m, t1_s)
-    write_card(ax5, "Résumé Test 2", stats2, dist2_m, t2_s)
-
-    # VC
-    ax6L.text(0.03, 0.90, "Vitesse Critique", fontsize=12, fontweight="bold")
-    if vc_dict is not None:
-        lines_vc = [
-            f"CS : {vc_dict['CS']:.2f} m/s",
-            f"VC : {vc_dict['V_kmh']:.2f} km/h",
-            f"Allure VC : {vc_dict['pace_str']}",
-            f"D′ : {vc_dict['D_prime']:.0f} m",
-        ]
-        ax6L.text(0.05, 0.80, "\n".join(lines_vc), fontsize=11, color=COLOR_BLACK)
-    else:
-        ax6L.text(0.05, 0.80, "— Non calculable —", fontsize=11, color=COLOR_GREY)
-
-    # IC
-    ax6R.text(0.03, 0.90, "Index de cinétique (IC)", fontsize=12, fontweight="bold")
-    if IC_value is not None:
-        lines_ic = [f"IC : {IC_value:.3f}", f"Unité dérives : {IC_unite}", f"Note : {IC_msg}"]
-        ax6R.text(0.05, 0.80, "\n".join(lines_ic), fontsize=11, color=COLOR_BLACK)
-    else:
-        ax6R.text(0.05, 0.80, "— Non calculable —", fontsize=11, color=COLOR_GREY)
-
-    # Prescription
-    ax7.text(0.03, 0.90, "Prescription (4–8 semaines)", fontsize=12, fontweight="bold")
-    if IC_reco is not None:
-        y = 0.78
-        ax7.text(0.04, y, f"• {IC_reco['titre']}", fontsize=11, color=COLOR_BLACK); y -= 0.08
-        for p in IC_reco["points"]:
-            ax7.text(0.05, y, f"– {p}", fontsize=10, color=COLOR_BLACK); y -= 0.06
-        y -= 0.04
-        ax7.text(0.04, y, "Séances types :", fontsize=11, color=COLOR_BLACK); y -= 0.08
-        for s in IC_reco["seances"]:
-            ax7.text(0.05, y, f"• {s}", fontsize=10, color=COLOR_BLACK); y -= 0.06
-    else:
-        ax7.text(0.04, 0.78, "— Aucune recommandation (IC indisponible) —", fontsize=11, color=COLOR_GREY)
-    ax7.add_patch(plt.Rectangle((0, -0.06), 1, 0.06, color=COLOR_RED, transform=ax7.transAxes))
-
-    buf = BytesIO()
-    fig.savefig(buf, format="png", dpi=220, bbox_inches="tight")
-    buf.seek(0)
-    plt.close(fig)
-    return buf
-
-
 # =============== HELPERS GRAPHIQUES (FC + Allure + Puissance) ======================
 
 def pace_formatter(v, pos):
     """Formateur d'axe pour allure en min:sec/km depuis une valeur en min/km."""
-    # v = minutes par km (float)
     if v is None or not math.isfinite(v) or v <= 0:
         return ""
     m = int(v)
     s = int(round((v - m) * 60))
+    if s == 60:
+        m += 1
+        s = 0
     return f"{m}:{s:02d}"
 
 def add_pace_axis(ax):
@@ -475,7 +347,7 @@ def add_pace_axis(ax):
     ax_pace = ax.twinx()
     ax_pace.set_ylabel("Allure (min/km)")
     ax_pace.yaxis.set_major_formatter(FuncFormatter(pace_formatter))
-    ax_pace.invert_yaxis()  # plus rapide vers le haut visuellement
+    ax_pace.invert_yaxis()
     return ax_pace
 
 def add_power_axis(ax, offset=60):
@@ -488,7 +360,7 @@ def add_power_axis(ax, offset=60):
     return ax_pow
 
 def compute_pace_series(df):
-    """Retourne une série d'allure (min/km) depuis speed_smooth (m/s)."""
+    """Allure (min/km) depuis speed_smooth (m/s)."""
     if "speed_smooth" not in df.columns:
         return None
     speed = df["speed_smooth"].astype(float).replace([np.inf, -np.inf], np.nan)
@@ -497,41 +369,51 @@ def compute_pace_series(df):
     pace_min_per_km[~np.isfinite(pace_min_per_km)] = np.nan
     return pace_min_per_km
 
-def plot_multi_signals(ax, df, t0=0.0, label_prefix="", show_fc=True, show_pace=False, show_power=False,
-                       color_fc=None, color_pace=None, color_power=None, linewidth=1.8):
+def plot_multi_signals(ax, df, t0=0.0, who="T1",
+                       show_fc=True, show_pace=False, show_power=False,
+                       linewidth=1.8):
     """
     Trace FC sur axe gauche, Allure sur axe droit (inversé), Puissance sur axe droit décalé.
-    Retourne les axes créés (ax, ax_pace, ax_pow).
+    who: "T1" | "T2" | "SES" (pour palette)
     """
+    # Couleurs par type et par test/séance
+    if who == "T1":
+        c_fc, c_pace, c_pow = COLOR_RED_T1, COLOR_BLUE_T1, COLOR_ORANGE_T1
+    elif who == "T2":
+        c_fc, c_pace, c_pow = COLOR_RED_T2, COLOR_BLUE_T2, COLOR_ORANGE_T2
+    else:  # "SES"
+        c_fc, c_pace, c_pow = COLOR_RED_SES, COLOR_BLUE_SES, COLOR_ORANGE_SES
+
     ax_pace = None
     ax_pow = None
-
     tt = df["time_s"].values - t0
 
+    # FC
     if show_fc and "hr_smooth" in df.columns:
-        ax.plot(tt, df["hr_smooth"], color=color_fc or COLOR_RED, linewidth=linewidth, label=f"{label_prefix}FC (bpm)")
+        ax.plot(tt, df["hr_smooth"], color=c_fc, linewidth=linewidth, label=f"{who} • FC (bpm)")
         ax.set_ylabel("FC (bpm)")
 
+    # Allure
     if show_pace and "speed_smooth" in df.columns:
         pace_series = compute_pace_series(df)
         if pace_series is not None:
-            ax_pace = add_pace_axis(ax) if ax_pace is None else ax_pace
-            ax_pace.plot(tt, pace_series, color=color_pace or COLOR_BLUE, linewidth=linewidth, label=f"{label_prefix}Allure (min/km)")
+            ax_pace = add_pace_axis(ax)
+            ax_pace.plot(tt, pace_series, color=c_pace, linewidth=linewidth, label=f"{who} • Allure (min/km)")
 
+    # Puissance
     if show_power and "power_smooth" in df.columns:
-        # place la puissance sur un axe droit décalé
         ax_pow = add_power_axis(ax, offset=60)
-        ax_pow.plot(tt, df["power_smooth"], color=color_power or COLOR_ORANGE, linewidth=linewidth, label=f"{label_prefix}Puissance (W)")
+        ax_pow.plot(tt, df["power_smooth"], color=c_pow, linewidth=linewidth, label=f"{who} • Puissance (W)")
 
     return ax, ax_pace, ax_pow
 
 
 # =============== APP ========================
-st.title("🏃‍♂️ Analyse de Tests d'Endurance + Vitesse Critique")
+st.title("🏃‍♂️ Analyse de Tests d'Endurance + Vitesse Critique (Export PDF)")
 
 tabs = st.tabs(["🧪 Tests d'endurance", "⚙️ Analyse entraînement", "📊 Analyse générale"])
 
-# Variables partagées
+# Variables partagées (onglets)
 interval_df1 = stats1 = None
 interval_df2 = stats2 = None
 drift1_bpm = drift2_bpm = None
@@ -546,7 +428,7 @@ with tabs[0]:
     st.header("🧪 Tests d'endurance")
 
     ctop = st.columns(2)
-    # ---- Carte Test 1
+    # ---- Test 1
     with ctop[0]:
         st.markdown('<div class="report-card">', unsafe_allow_html=True)
         st.subheader("Test 1")
@@ -590,50 +472,55 @@ with tabs[0]:
 
             if end_sec1 <= start_sec1:
                 st.error("La fin doit être supérieure au début.")
-                st.markdown('</div>', unsafe_allow_html=True)
-                st.stop()
+            else:
+                if end_sec1 > df1["time_s"].max():
+                    st.warning("⚠️ Fin > données disponibles. Limitation automatique (Test 1).")
+                    end_sec1 = df1["time_s"].max()
 
-            if end_sec1 > df1["time_s"].max():
-                st.warning("⚠️ Fin > données disponibles. Limitation automatique (Test 1).")
-                end_sec1 = df1["time_s"].max()
+                interval_df1 = df1[(df1["time_s"] >= start_sec1) & (df1["time_s"] <= end_sec1)]
 
-            interval_df1 = df1[(df1["time_s"] >= start_sec1) & (df1["time_s"] <= end_sec1)]
+                if len(interval_df1) > 10:
+                    stats1, drift1_bpm, drift1_pct = analyze_heart_rate(interval_df1)
+                    dist1_m = segment_distance_m(interval_df1)
+                    t1_s = float(end_sec1 - start_sec1)
+                    v1_kmh = 3.6 * (dist1_m / t1_s) if t1_s > 0 else 0.0
 
-            if len(interval_df1) > 10:
-                stats1, drift1_bpm, drift1_pct = analyze_heart_rate(interval_df1)
-                dist1_m = segment_distance_m(interval_df1)
-                t1_s = float(end_sec1 - start_sec1)
-                v1_kmh = 3.6 * (dist1_m / t1_s) if t1_s > 0 else 0.0
+                    # Tableau métriques
+                    table1 = pd.DataFrame({
+                        "Métrique": ["FC moyenne (bpm)", "FC max (bpm)", "Dérive (bpm/min)", "Dérive (%/min)", "Durée (s)", "Distance (m)", "Vitesse moy (km/h)"],
+                        "Valeur": [stats1['FC moyenne (bpm)'], stats1['FC max (bpm)'], stats1['Dérive (bpm/min)'],
+                                   stats1['Dérive (%/min)'], stats1['Durée segment (s)'], round(dist1_m,1), round(v1_kmh,2)]
+                    })
+                    st.markdown('<div class="table-box">', unsafe_allow_html=True)
+                    st.dataframe(table1, use_container_width=True, hide_index=True)
+                    st.markdown('</div>', unsafe_allow_html=True)
 
-                # Tableau métriques
-                table1 = pd.DataFrame({
-                    "Métrique": ["FC moyenne (bpm)", "FC max (bpm)", "Dérive (bpm/min)", "Dérive (%/min)", "Durée (s)", "Distance (m)", "Vitesse moy (km/h)"],
-                    "Valeur": [stats1['FC moyenne (bpm)'], stats1['FC max (bpm)'], stats1['Dérive (bpm/min)'],
-                               stats1['Dérive (%/min)'], stats1['Durée segment (s)'], round(dist1_m,1), round(v1_kmh,2)]
-                })
-                st.markdown('<div class="table-box">', unsafe_allow_html=True)
-                st.dataframe(table1, use_container_width=True, hide_index=True)
-                st.markdown('</div>', unsafe_allow_html=True)
+                    # Graphique (FC + Allure + Puissance, double axe)
+                    fig1, ax1 = plt.subplots(figsize=(9, 4.8))
+                    plot_multi_signals(
+                        ax1, interval_df1, t0=start_sec1, who="T1",
+                        show_fc=show_t1_fc,
+                        show_pace=show_t1_pace and (get_speed_col(interval_df1) is not None),
+                        show_power=show_t1_power and ("power_smooth" in interval_df1.columns),
+                        linewidth=1.9
+                    )
+                    ax1.set_xlabel("Temps segment (s)")
+                    ax1.set_title(f"Cinétique - Test 1 ({test1_date})")
+                    ax1.grid(True, alpha=0.15)
 
-                # Graphique individuel (FC + Allure + Puissance)
-                fig1, ax1 = plt.subplots()
-                plot_multi_signals(
-                    ax1, interval_df1, t0=start_sec1, label_prefix="T1 ",
-                    show_fc=show_t1_fc,
-                    show_pace=show_t1_pace and (get_speed_col(interval_df1) is not None),
-                    show_power=show_t1_power and ("power_smooth" in interval_df1.columns),
-                    color_fc=COLOR_RED, color_pace=COLOR_BLUE, color_power=COLOR_ORANGE
-                )
-                ax1.set_xlabel("Temps segment (s)")
-                ax1.set_title(f"Cinétique - Test 1 ({test1_date})")
-                ax1.grid(True, alpha=0.15)
-                st.pyplot(fig1)
-                st.download_button("💾 PNG Test 1", data=fig_to_png_bytes(fig1), file_name="test1_graph.png", mime="image/png")
-                plt.close(fig1)
+                    # Légende fusionnée
+                    handles, labels = [], []
+                    for a in fig1.axes:
+                        h, l = a.get_legend_handles_labels()
+                        handles += h; labels += l
+                    if handles:
+                        ax1.legend(handles, labels, fontsize=8, loc="upper left", frameon=False)
+
+                    st.pyplot(fig1)
 
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # ---- Carte Test 2
+    # ---- Test 2
     with ctop[1]:
         st.markdown('<div class="report-card">', unsafe_allow_html=True)
         st.subheader("Test 2")
@@ -677,52 +564,56 @@ with tabs[0]:
 
             if end_sec2 <= start_sec2:
                 st.error("La fin doit être supérieure au début.")
-                st.markdown('</div>', unsafe_allow_html=True)
-                st.stop()
+            else:
+                if end_sec2 > df2["time_s"].max():
+                    st.warning("⚠️ Fin > données disponibles. Limitation automatique (Test 2).")
+                    end_sec2 = df2["time_s"].max()
 
-            if end_sec2 > df2["time_s"].max():
-                st.warning("⚠️ Fin > données disponibles. Limitation automatique (Test 2).")
-                end_sec2 = df2["time_s"].max()
+                interval_df2 = df2[(df2["time_s"] >= start_sec2) & (df2["time_s"] <= end_sec2)]
 
-            interval_df2 = df2[(df2["time_s"] >= start_sec2) & (df2["time_s"] <= end_sec2)]
+                if len(interval_df2) > 10:
+                    stats2, drift2_bpm, drift2_pct = analyze_heart_rate(interval_df2)
+                    dist2_m = segment_distance_m(interval_df2)
+                    t2_s = float(end_sec2 - start_sec2)
+                    v2_kmh = 3.6 * (dist2_m / t2_s) if t2_s > 0 else 0.0
 
-            if len(interval_df2) > 10:
-                stats2, drift2_bpm, drift2_pct = analyze_heart_rate(interval_df2)
-                dist2_m = segment_distance_m(interval_df2)
-                t2_s = float(end_sec2 - start_sec2)
-                v2_kmh = 3.6 * (dist2_m / t2_s) if t2_s > 0 else 0.0
+                    # Tableau métriques
+                    table2 = pd.DataFrame({
+                        "Métrique": ["FC moyenne (bpm)", "FC max (bpm)", "Dérive (bpm/min)", "Dérive (%/min)", "Durée (s)", "Distance (m)", "Vitesse moy (km/h)"],
+                        "Valeur": [stats2['FC moyenne (bpm)'], stats2['FC max (bpm)'], stats2['Dérive (bpm/min)'],
+                                   stats2['Dérive (%/min)'], stats2['Durée segment (s)'], round(dist2_m,1), round(v2_kmh,2)]
+                    })
+                    st.markdown('<div class="table-box">', unsafe_allow_html=True)
+                    st.dataframe(table2, use_container_width=True, hide_index=True)
+                    st.markdown('</div>', unsafe_allow_html=True)
 
-                # Tableau métriques
-                table2 = pd.DataFrame({
-                    "Métrique": ["FC moyenne (bpm)", "FC max (bpm)", "Dérive (bpm/min)", "Dérive (%/min)", "Durée (s)", "Distance (m)", "Vitesse moy (km/h)"],
-                    "Valeur": [stats2['FC moyenne (bpm)'], stats2['FC max (bpm)'], stats2['Dérive (bpm/min)'],
-                               stats2['Dérive (%/min)'], stats2['Durée segment (s)'], round(dist2_m,1), round(v2_kmh,2)]
-                })
-                st.markdown('<div class="table-box">', unsafe_allow_html=True)
-                st.dataframe(table2, use_container_width=True, hide_index=True)
-                st.markdown('</div>', unsafe_allow_html=True)
+                    # Graphique
+                    fig2, ax2 = plt.subplots(figsize=(9, 4.8))
+                    plot_multi_signals(
+                        ax2, interval_df2, t0=start_sec2, who="T2",
+                        show_fc=show_t2_fc,
+                        show_pace=show_t2_pace and (get_speed_col(interval_df2) is not None),
+                        show_power=show_t2_power and ("power_smooth" in interval_df2.columns),
+                        linewidth=1.9
+                    )
+                    ax2.set_xlabel("Temps segment (s)")
+                    ax2.set_title(f"Cinétique - Test 2 ({test2_date})")
+                    ax2.grid(True, alpha=0.15)
 
-                # Graphique individuel (FC + Allure + Puissance)
-                fig2, ax2 = plt.subplots()
-                plot_multi_signals(
-                    ax2, interval_df2, t0=start_sec2, label_prefix="T2 ",
-                    show_fc=show_t2_fc,
-                    show_pace=show_t2_pace and (get_speed_col(interval_df2) is not None),
-                    show_power=show_t2_power and ("power_smooth" in interval_df2.columns),
-                    color_fc=COLOR_BLACK, color_pace=COLOR_BLUE, color_power=COLOR_ORANGE
-                )
-                ax2.set_xlabel("Temps segment (s)")
-                ax2.set_title(f"Cinétique - Test 2 ({test2_date})")
-                ax2.grid(True, alpha=0.15)
-                st.pyplot(fig2)
-                st.download_button("💾 PNG Test 2", data=fig_to_png_bytes(fig2), file_name="test2_graph.png", mime="image/png")
-                plt.close(fig2)
+                    handles, labels = [], []
+                    for a in fig2.axes:
+                        h, l = a.get_legend_handles_labels()
+                        handles += h; labels += l
+                    if handles:
+                        ax2.legend(handles, labels, fontsize=8, loc="upper left", frameon=False)
+
+                    st.pyplot(fig2)
 
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # ---- Graphique combiné unique (bpm + autres) ----
+    # ---- Graphique combiné unique (sélections)
     st.markdown('<div class="report-card">', unsafe_allow_html=True)
-    st.subheader("Graphique combiné — sélectionne les séries à afficher")
+    st.subheader("Graphique combiné — sélectionne les séries à afficher (PDF via onglet 3)")
     show_c_fc_t1 = st.checkbox("☑️ FC Test 1", value=True)
     show_c_pace_t1 = st.checkbox("☑️ Allure Test 1", value=False)
     show_c_pow_t1 = st.checkbox("☑️ Puissance Test 1", value=False)
@@ -731,38 +622,40 @@ with tabs[0]:
     show_c_pow_t2 = st.checkbox("☑️ Puissance Test 2", value=False)
 
     if (interval_df1 is not None) or (interval_df2 is not None):
-        figC, axC = plt.subplots()
-        any_curve = False
+        figC, axC = plt.subplots(figsize=(9.5, 5.2))
         if interval_df1 is not None:
             plot_multi_signals(
-                axC, interval_df1, t0=interval_df1["time_s"].iloc[0], label_prefix="T1 ",
+                axC, interval_df1, t0=interval_df1["time_s"].iloc[0], who="T1",
                 show_fc=show_c_fc_t1,
                 show_pace=show_c_pace_t1 and (get_speed_col(interval_df1) is not None),
                 show_power=show_c_pow_t1 and ("power_smooth" in interval_df1.columns),
-                color_fc=COLOR_RED, color_pace=COLOR_BLUE, color_power=COLOR_ORANGE
-            ); any_curve = True
+                linewidth=1.9
+            )
         if interval_df2 is not None:
             plot_multi_signals(
-                axC, interval_df2, t0=interval_df2["time_s"].iloc[0], label_prefix="T2 ",
+                axC, interval_df2, t0=interval_df2["time_s"].iloc[0], who="T2",
                 show_fc=show_c_fc_t2,
                 show_pace=show_c_pace_t2 and (get_speed_col(interval_df2) is not None),
                 show_power=show_c_pow_t2 and ("power_smooth" in interval_df2.columns),
-                color_fc=COLOR_BLACK, color_pace=COLOR_BLUE, color_power=COLOR_ORANGE
-            ); any_curve = True
-
+                linewidth=1.9
+            )
         axC.set_xlabel("Temps segment (s)")
         axC.set_title("Comparaison des cinétiques (FC + Allure + Puissance)")
         axC.grid(True, alpha=0.15)
-        if any_curve:
-            pass
+
+        handles, labels = [], []
+        for a in figC.axes:
+            h, l = a.get_legend_handles_labels()
+            handles += h; labels += l
+        if handles:
+            axC.legend(handles, labels, fontsize=8, loc="upper left", frameon=False)
+
         st.pyplot(figC)
-        st.download_button("💾 PNG combiné", data=fig_to_png_bytes(figC), file_name="combine_multi.png", mime="image/png")
-        plt.close(figC)
     else:
         st.info("Importe au moins un test et coche les options d’affichage.")
     st.markdown('</div>', unsafe_allow_html=True)
 
-# ---------- Onglet 2 : Analyse entraînement (multi-séances + IC local + multi-séries) ----------
+# ---------- Onglet 2 : Analyse entraînement ----------
 with tabs[1]:
     st.header("⚙️ Analyse entraînement (multi-séances + IC local + FC/Allure/Puissance)")
 
@@ -824,7 +717,6 @@ with tabs[1]:
             with c2:
                 end_str = st.text_input("Fin (hh:mm:ss)", value="0:05:00", key="train_end")
 
-            # Cases par défaut pour quels signaux afficher pour cet intervalle (stockées dans l'item)
             c3, c4, c5 = st.columns(3)
             with c3:
                 show_fc_it = st.checkbox("FC", value=True, key="it_fc")
@@ -860,24 +752,19 @@ with tabs[1]:
             t_s = e - s
             v_kmh = 3.6 * (dist_m / t_s) if t_s > 0 else 0.0
 
-            # IC local = dérive locale (on expose bpm/min & %/min)
+            # IC local = dérive locale (bpm/min & %/min)
             ic_local_bpm = drift_bpm
             ic_local_pct = drift_pct
 
-            # Prépare séries pour graphes panneaux
             curve_time = (df_seg["time_s"] - df_seg["time_s"].iloc[0]).values
-            series = {"time": curve_time}
-            series["bpm"] = df_seg["hr_smooth"].values if "hr_smooth" in df_seg.columns else None
-
             speed_col = get_speed_col(df_seg)
-            if speed_col:
-                # sur df_seg issu de smooth_hr, on a speed_smooth
-                pace_series = compute_pace_series(df_seg)
-                series["pace"] = pace_series.values if pace_series is not None else None
-            else:
-                series["pace"] = None
 
-            series["power"] = df_seg["power_smooth"].values if "power_smooth" in df_seg.columns else None
+            series = {
+                "_curve_time": curve_time,
+                "_curve_bpm": df_seg["hr_smooth"].values if "hr_smooth" in df_seg.columns else None,
+                "_curve_pace": compute_pace_series(df_seg).values if speed_col else None,
+                "_curve_power": df_seg["power_smooth"].values if "power_smooth" in df_seg.columns else None
+            }
 
             return {
                 "Séance": session_name,
@@ -892,10 +779,7 @@ with tabs[1]:
                 "Vitesse (km/h)": round(v_kmh, 2),
                 "IC local (bpm/min)": round(ic_local_bpm, 4) if ic_local_bpm is not None else None,
                 "IC local (%/min)": round(ic_local_pct, 4) if ic_local_pct is not None else None,
-                "_curve_time": series["time"],
-                "_curve_bpm": series["bpm"],
-                "_curve_pace": series["pace"],
-                "_curve_power": series["power"],
+                **series,
                 "_id": f"{session_name} {start_str}→{end_str}",
                 "Afficher": True,
                 "show_fc": bool(show_fc_it),
@@ -909,11 +793,10 @@ with tabs[1]:
                 st.session_state.training_intervals.append(res)
                 st.success(f"Intervalle ajouté ({res['_id']})")
 
-    # --- Tableau global des intervalles + export ---
+    # --- Tableau global des intervalles + export CSV (optionnel) ---
     if st.session_state.training_intervals:
         st.markdown('<div class="report-card">', unsafe_allow_html=True)
         st.subheader("📋 Intervalles analysés (IC local inclus)")
-
         df_int = pd.DataFrame([
             {k:v for k,v in d.items()
              if not k.startswith("_curve_") and not k.startswith("_id") and not k.startswith("show_")}
@@ -922,16 +805,9 @@ with tabs[1]:
         st.markdown('<div class="table-box">', unsafe_allow_html=True)
         st.dataframe(df_int, use_container_width=True, hide_index=True)
         st.markdown('</div>', unsafe_allow_html=True)
-
-        st.download_button(
-            "💾 Exporter les intervalles (CSV)",
-            data=df_int.to_csv(index=False).encode("utf-8"),
-            file_name="analyse_intervalles.csv",
-            mime="text/csv"
-        )
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # --- 3 panneaux graphiques superposables (avec cases FC/Allure/Puissance) ---
+        # --- 3 panneaux graphiques superposables ---
         st.markdown("### 📈 Panneaux de graphiques (superpose les intervalles choisis)")
 
         def render_panel(panel_title, key_prefix):
@@ -952,60 +828,43 @@ with tabs[1]:
                 st.info("Sélectionne au moins un intervalle.")
                 return
 
-            fig, ax = plt.subplots()
-            # Pour chaque intervalle sélectionné, tracer ce qui est demandé
+            fig, ax = plt.subplots(figsize=(9.5, 5.2))
+
             for d in st.session_state.training_intervals:
                 if d["_id"] not in selected:
                     continue
                 tt = d["_curve_time"]
-                label_prefix = d["_id"] + " — "
-
+                # Palette "SES"
                 # FC
                 if show_fc and d["_curve_bpm"] is not None:
-                    ax.plot(tt, d["_curve_bpm"], label=label_prefix + "FC", color=COLOR_RED, linewidth=1.6)
-
+                    ax.plot(tt, d["_curve_bpm"], label=f"{d['_id']} • FC", color=COLOR_RED_SES, linewidth=1.6)
                 # Allure
-                ax_pace = None
                 if show_pace and d["_curve_pace"] is not None:
                     ax_pace = add_pace_axis(ax) if not hasattr(ax, "_pace_added") else ax._pace_axis
                     if not hasattr(ax, "_pace_added"):
                         ax._pace_added = True
                         ax._pace_axis = ax_pace
-                    ax_pace.plot(tt, d["_curve_pace"], label=label_prefix + "Allure", color=COLOR_BLUE, linewidth=1.4)
-
-                # Puissance (axe droit décalé)
+                    ax_pace.plot(tt, d["_curve_pace"], label=f"{d['_id']} • Allure", color=COLOR_BLUE_SES, linewidth=1.4)
+                # Puissance
                 if show_power and d["_curve_power"] is not None:
                     ax_pow = add_power_axis(ax, offset=60 if not hasattr(ax, "_pow_added") else 60)
                     ax._pow_added = True
-                    ax_pow.plot(tt, d["_curve_power"], label=label_prefix + "Puissance", color=COLOR_ORANGE, linewidth=1.4)
+                    ax_pow.plot(tt, d["_curve_power"], label=f"{d['_id']} • Puissance", color=COLOR_ORANGE_SES, linewidth=1.4)
 
             ax.set_xlabel("Temps intervalle (s)")
             ax.set_ylabel("FC (bpm)")
             ax.set_title(panel_title)
             ax.grid(True, alpha=0.15)
 
-            # Légende combinée (récupérer handles de tous les axes)
-            handles, labels = ax.get_legend_handles_labels()
-            if hasattr(ax, "_pace_added"):
-                h2, l2 = ax._pace_axis.get_legend_handles_labels()
-                handles += h2; labels += l2
-            # Puissance : l'axe décalé est recréé à chaque fois, on ne garde pas la ref
-            # on fusionne depuis les axes de la figure
+            # Légende combinée
+            handles, labels = [], []
             for a in fig.axes:
-                if a is not ax and a is not getattr(ax, "_pace_axis", None):
-                    h, l = a.get_legend_handles_labels()
-                    handles += h; labels += l
+                h, l = a.get_legend_handles_labels()
+                handles += h; labels += l
             if handles:
-                ax.legend(handles, labels, fontsize=8, loc="upper left")
+                ax.legend(handles, labels, fontsize=8, loc="upper left", frameon=False)
 
             st.pyplot(fig)
-            st.download_button(
-                f"💾 PNG {panel_title}",
-                data=fig_to_png_bytes(fig),
-                file_name=f"{panel_title.lower().replace(' ', '_')}.png",
-                mime="image/png"
-            )
-            plt.close(fig)
 
         render_panel("Panneau A", "panelA")
         render_panel("Panneau B", "panelB")
@@ -1014,22 +873,16 @@ with tabs[1]:
         c1, c2 = st.columns(2)
         if c1.button("🗑️ Vider les intervalles"):
             st.session_state.training_intervals = []
-            try:
-                st.experimental_rerun()
-            except Exception:
-                st.rerun()
+            st.experimental_rerun()
         if c2.button("🗑️ Vider les séances"):
             st.session_state.sessions = {}
-            try:
-                st.experimental_rerun()
-            except Exception:
-                st.rerun()
+            st.experimental_rerun()
     else:
         st.info("Ajoute des intervalles (depuis les séances importées) pour afficher les résultats et l'IC local.")
 
-# ---------- Onglet 3 : Analyse générale ----------
+# ---------- Onglet 3 : Analyse générale (VC + IC + Export PDF) ----------
 with tabs[2]:
-    st.header("📊 Analyse générale : VC, Index de cinétique & Rapport PNG")
+    st.header("📊 Analyse générale : VC, Index de cinétique & Export PDF")
 
     vc_dict = None
     IC_value = None
@@ -1037,7 +890,78 @@ with tabs[2]:
     IC_msg = None
     IC_reco = None
 
-    if (interval_df1 is not None) and (interval_df2 is not None) and (t1_s and t2_s) and (dist1_m and dist2_m):
+    # Bouton global pour créer un PDF multi-pages des figures actuellement affichées
+    st.markdown('<div class="report-card">', unsafe_allow_html=True)
+    st.subheader("🖨️ Export PDF")
+    st.caption("Le PDF inclut les figures créées depuis cette session (tests, combinés, entraînement…).")
+
+    if st.button("📄 Générer un PDF de toutes les figures ouvertes"):
+        # On ne peut pas récupérer rétroactivement toutes les figs Streamlit,
+        # donc on génère une page de synthèse dédiée + on propose de régénérer les principaux graphiques.
+        figs = []
+
+        # Page de garde
+        fig0 = plt.figure(figsize=(8.5, 11))
+        fig0.text(0.05, 0.92, "Rapport d'analyse (PDF)", fontsize=20, weight="bold")
+        fig0.text(0.05, 0.86, "Contenu :", fontsize=12)
+        fig0.text(0.07, 0.82, "• Tests d'endurance (T1/T2) — courbes FC/Allure/Puissance", fontsize=10)
+        fig0.text(0.07, 0.78, "• Graphique combiné (sélection)", fontsize=10)
+        fig0.text(0.07, 0.74, "• Analyse générale : VC, IC et comparatifs", fontsize=10)
+        fig0.text(0.05, 0.06, "Conseil : Utilise ensuite la fonction d'impression du lecteur PDF pour \"A4 portrait\".", fontsize=9, color=COLOR_GREY)
+        figs.append(fig0)
+
+        # (Re)générer quelques figures clés si disponibles
+        if interval_df1 is not None:
+            f1, ax = plt.subplots(figsize=(9, 4.8))
+            plot_multi_signals(ax, interval_df1, t0=interval_df1["time_s"].iloc[0], who="T1",
+                               show_fc=True,
+                               show_pace=(get_speed_col(interval_df1) is not None),
+                               show_power=("power_smooth" in interval_df1.columns),
+                               linewidth=1.8)
+            ax.set_title("Test 1 — courbes")
+            ax.set_xlabel("Temps (s)")
+            ax.grid(True, alpha=0.15)
+            handles, labels = [], []
+            for a in f1.axes:
+                h, l = a.get_legend_handles_labels()
+                handles += h; labels += l
+            if handles: ax.legend(handles, labels, fontsize=8, loc="upper left", frameon=False)
+            figs.append(f1)
+
+        if interval_df2 is not None:
+            f2, ax = plt.subplots(figsize=(9, 4.8))
+            plot_multi_signals(ax, interval_df2, t0=interval_df2["time_s"].iloc[0], who="T2",
+                               show_fc=True,
+                               show_pace=(get_speed_col(interval_df2) is not None),
+                               show_power=("power_smooth" in interval_df2.columns),
+                               linewidth=1.8)
+            ax.set_title("Test 2 — courbes")
+            ax.set_xlabel("Temps (s)")
+            ax.grid(True, alpha=0.15)
+            handles, labels = [], []
+            for a in f2.axes:
+                h, l = a.get_legend_handles_labels()
+                handles += h; labels += l
+            if handles: ax.legend(handles, labels, fontsize=8, loc="upper left", frameon=False)
+            figs.append(f2)
+
+        # Export
+        buf = fig_to_pdf_bytes(figs)
+        st.download_button("⬇️ Télécharger le PDF", data=buf, file_name="rapport_endurance.pdf", mime="application/pdf")
+
+        # Fermer les figs créées pour le PDF
+        for f in figs:
+            plt.close(f)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # === Calculs VC + IC (comparatif T1 vs T2) ===
+    if ("interval_df1" not in locals()) or ("interval_df2" not in locals()):
+        pass
+
+    if ('interval_df1' in locals() and interval_df1 is not None) and ('interval_df2' in locals() and interval_df2 is not None) and \
+       (t1_s and t2_s) and (dist1_m and dist2_m):
+
         # Définir "court" et "long" par durée
         if t1_s <= t2_s:
             drift_short_bpm, drift_long_bpm = drift1_bpm, drift2_bpm
@@ -1050,6 +974,7 @@ with tabs[2]:
         D1, T1 = float(dist1_m), float(t1_s)
         D2, T2 = float(dist2_m), float(t2_s)
 
+        vc_dict = None
         if (T2 != T1) and (D1 > 0 and D2 > 0 and T1 > 0 and T2 > 0):
             CS = (D2 - D1) / (T2 - T1)
             D_prime = D1 - CS * T1
@@ -1059,14 +984,14 @@ with tabs[2]:
                 pace_str = f"{pace[0]}:{pace[1]:02d} min/km" if pace else "—"
                 vc_dict = {"CS": CS, "V_kmh": V_kmh, "D_prime": D_prime, "pace_str": pace_str}
 
-        # Index de cinétique (IC) + reco
+        # IC comparatif
         IC_value, IC_unite, IC_msg, _, IC_reco = compute_index_cinetique(
             drift_short_pct, drift_long_pct, drift_short_bpm, drift_long_bpm
         )
 
-        # Synthèse
+        # Tableau de synthèse
         st.markdown('<div class="report-card">', unsafe_allow_html=True)
-        st.subheader("🧾 Synthèse")
+        st.subheader("🧾 Synthèse VC & IC")
         tab_synth = []
         if vc_dict:
             tab_synth += [
@@ -1086,8 +1011,8 @@ with tabs[2]:
             st.dataframe(pd.DataFrame(tab_synth), use_container_width=True, hide_index=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-        # Graph comparatif final avec sélections FC/Allure/Puissance
-        st.markdown("### Graphique comparatif — sélection")
+        # Graphique comparatif final (FC+Allure+Puissance) avec cases
+        st.markdown("### Graphique comparatif — sélection (à inclure dans PDF via bouton ci-dessus)")
         gc1, gc2, gc3, gc4, gc5, gc6 = st.columns(6)
         with gc1:
             g_fc_t1 = st.checkbox("FC T1", True, key="g_fc_t1")
@@ -1102,43 +1027,33 @@ with tabs[2]:
         with gc6:
             g_pow_t2 = st.checkbox("Puissance T2", False, key="g_pow_t2")
 
-        figC, axC = plt.subplots()
-        # T1
+        figC, axC = plt.subplots(figsize=(9.5, 5.2))
         plot_multi_signals(
-            axC, interval_df1, t0=interval_df1["time_s"].iloc[0], label_prefix="T1 ",
+            axC, interval_df1, t0=interval_df1["time_s"].iloc[0], who="T1",
             show_fc=g_fc_t1,
             show_pace=g_pace_t1 and (get_speed_col(interval_df1) is not None),
             show_power=g_pow_t1 and ("power_smooth" in interval_df1.columns),
-            color_fc=COLOR_RED, color_pace=COLOR_BLUE, color_power=COLOR_ORANGE
+            linewidth=1.9
         )
-        # T2
         plot_multi_signals(
-            axC, interval_df2, t0=interval_df2["time_s"].iloc[0], label_prefix="T2 ",
+            axC, interval_df2, t0=interval_df2["time_s"].iloc[0], who="T2",
             show_fc=g_fc_t2,
             show_pace=g_pace_t2 and (get_speed_col(interval_df2) is not None),
             show_power=g_pow_t2 and ("power_smooth" in interval_df2.columns),
-            color_fc=COLOR_BLACK, color_pace=COLOR_BLUE, color_power=COLOR_ORANGE
+            linewidth=1.9
         )
         axC.set_xlabel("Temps segment (s)")
         axC.set_title("Comparaison (FC + Allure + Puissance)")
         axC.grid(True, alpha=0.15)
+
+        handles, labels = [], []
+        for a in figC.axes:
+            h, l = a.get_legend_handles_labels()
+            handles += h; labels += l
+        if handles:
+            axC.legend(handles, labels, fontsize=8, loc="upper left", frameon=False)
+
         st.pyplot(figC)
-        st.download_button("💾 PNG comparatif", data=fig_to_png_bytes(figC), file_name="comparatif_multi.png", mime="image/png")
-        plt.close(figC)
 
-        st.markdown('<hr/>', unsafe_allow_html=True)
-        st.subheader("🖼️ Rapport complet (PNG)")
-
-        full_report_png = render_full_report_png(
-            title="Rapport complet – Endurance & VC (Rouge/Noir/Blanc)",
-            date1=test1_date, date2=test2_date,
-            interval_df1=interval_df1, start_sec1=start_sec1, stats1=stats1, dist1_m=dist1_m, t1_s=t1_s,
-            interval_df2=interval_df2, start_sec2=start_sec2, stats2=stats2, dist2_m=dist2_m, t2_s=t2_s,
-            vc_dict=vc_dict,
-            IC_value=IC_value, IC_unite=IC_unite, IC_msg=IC_msg, IC_reco=IC_reco
-        )
-        st.download_button("💾 Télécharger le RAPPORT COMPLET (PNG)", data=full_report_png,
-                           file_name="rapport_complet_endurance_vc.png", mime="image/png")
-        st.markdown('</div>', unsafe_allow_html=True)
     else:
-        st.info("Importe et définis les segments des deux tests pour activer la synthèse et le rapport.")
+        st.info("Importe et définis les segments des deux tests pour activer la synthèse VC/IC et l'export PDF.")
