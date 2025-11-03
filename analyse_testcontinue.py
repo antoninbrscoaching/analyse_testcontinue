@@ -1,5 +1,5 @@
 # ============================
-# 🏃‍♂️ Analyse Endurance (Tests fusionnés) + VC + Index de cinétique + Entraînement (+) + PNG
+# 🏃‍♂️ Analyse Endurance (Tests fusionnés) + VC + Index de cinétique + Entraînement (+ FIT) — VERSION SANS FC RELATIVE
 # ============================
 
 import streamlit as st
@@ -238,7 +238,7 @@ def compute_index_cinetique(drift_short_pct, drift_long_pct, drift_short_bpm, dr
       - IC (float)
       - unite ('%/min' ou 'bpm/min')
       - message (texte court)
-      - niveau ('tres_bon', 'bon', 'moyen', 'faible', 'degrade')
+      - niveau (unused ici)
       - reco (dict) -> 'titre', 'points' (liste), 'seances' (liste)
     On privilégie les dérives en %/min si disponibles.
     """
@@ -292,7 +292,7 @@ def render_full_report_png(
     interval_df2, start_sec2, stats2, dist2_m, t2_s,
     vc_dict, IC_value, IC_unite, IC_msg, IC_reco
 ):
-    """Rapport PNG (comme avant) — Tests, Comparatif, VC & IC, Prescription."""
+    """Rapport PNG — Tests, Comparatif, VC & IC, Prescription (sans courbes relatives)."""
     mpl.rcParams.update({
         "axes.edgecolor": COLOR_BLACK,
         "axes.labelcolor": COLOR_BLACK,
@@ -318,21 +318,21 @@ def render_full_report_png(
     ax_title.text(0.02, 0.50, f"Test 1 : {date1}   •   Test 2 : {date2}", fontsize=11, color=COLOR_GREY)
     ax_title.text(0.02, 0.25, "FC, Dérive, Distances, VC, Index de cinétique, Prescription", fontsize=10, color=COLOR_GREY)
 
-    # Graph Test 1
+    # Graph Test 1 (bpm)
     ax1 = fig.add_subplot(gs[1, :])
     ax1.set_title("Cinétique cardiaque — Test 1", fontsize=12, fontweight="bold")
     if interval_df1 is not None and len(interval_df1) > 1:
         ax1.plot(interval_df1["time_s"] - start_sec1, interval_df1["hr_smooth"], linewidth=2, color=COLOR_RED, label="FC Test 1")
     ax1.set_xlabel("Temps segment (s)"); ax1.set_ylabel("Fréquence cardiaque (bpm)"); ax1.grid(True, alpha=0.15)
 
-    # Graph Test 2
+    # Graph Test 2 (bpm)
     ax2 = fig.add_subplot(gs[2, :])
     ax2.set_title("Cinétique cardiaque — Test 2", fontsize=12, fontweight="bold")
     if interval_df2 is not None and len(interval_df2) > 1:
         ax2.plot(interval_df2["time_s"] - start_sec2, interval_df2["hr_smooth"], linewidth=2, color=COLOR_BLACK, label="FC Test 2")
     ax2.set_xlabel("Temps segment (s)"); ax2.set_ylabel("Fréquence cardiaque (bpm)"); ax2.grid(True, alpha=0.15)
 
-    # Graph Comparatif
+    # Graph Comparatif (bpm)
     ax3 = fig.add_subplot(gs[3, :])
     ax3.set_title("Comparatif des cinétiques (segments centrés en t=0)", fontsize=12, fontweight="bold")
     if interval_df1 is not None and len(interval_df1) > 1:
@@ -365,7 +365,6 @@ def render_full_report_png(
         else:
             ax.text(0.05, 0.80, "—", fontsize=11, color=COLOR_GREY)
 
-    # ces variables seront passées par l'appelant
     # VC + IC
     ax6L = fig.add_subplot(gs[5, 0]); ax6R = fig.add_subplot(gs[5, 1])
     for ax in (ax6L, ax6R):
@@ -420,10 +419,7 @@ def render_full_report_png(
     buf.seek(0)
     plt.close(fig)
     return buf
-
-
 # =============== APP ========================
-
 st.title("🏃‍♂️ Analyse de Tests d'Endurance + Vitesse Critique")
 
 tabs = st.tabs(["🧪 Tests d'endurance", "⚙️ Analyse entraînement", "📊 Analyse générale"])
@@ -450,7 +446,7 @@ with tabs[0]:
         uploaded_file1 = st.file_uploader("Fichier Test 1 (FIT, GPX, CSV)", type=["fit", "gpx", "csv"], key="file1")
         test1_date = st.date_input("📅 Date du test 1", value=date.today(), key="date1")
 
-        show_test1 = st.checkbox("☑️ Afficher Test 1 dans le graphique combiné", value=True, key="show_t1")
+        show_test1 = st.checkbox("☑️ Afficher Test 1 dans le combiné", value=True, key="show_t1")
 
         if uploaded_file1:
             try:
@@ -510,7 +506,7 @@ with tabs[0]:
                 st.dataframe(table1, use_container_width=True, hide_index=True)
                 st.markdown('</div>', unsafe_allow_html=True)
 
-                # Graphique individuel (bpm + %)
+                # Graphique individuel (bpm)
                 fig1, ax1 = plt.subplots()
                 ax1.plot(interval_df1["time_s"] - start_sec1, interval_df1["hr_smooth"], label="FC (bpm)", color=COLOR_RED)
                 ax1.set_xlabel("Temps segment (s)")
@@ -518,19 +514,6 @@ with tabs[0]:
                 ax1.set_title(f"Cinétique cardiaque - Test 1 ({test1_date})")
                 ax1.legend()
                 st.pyplot(fig1); st.download_button("💾 PNG Test 1", data=fig_to_png_bytes(fig1), file_name="test1_graph.png", mime="image/png"); plt.close(fig1)
-
-                # % relatif au début du segment
-                hr0 = max(1e-6, float(interval_df1["hr_smooth"].iloc[0]))
-                interval_df1 = interval_df1.copy()
-                interval_df1["hr_pct"] = 100.0 * interval_df1["hr_smooth"] / hr0
-
-                fig1p, ax1p = plt.subplots()
-                ax1p.plot(interval_df1["time_s"] - start_sec1, interval_df1["hr_pct"], label="FC relative (%)", color=COLOR_BLACK)
-                ax1p.set_xlabel("Temps segment (s)")
-                ax1p.set_ylabel("FC (%)")
-                ax1p.set_title(f"Cinétique relative - Test 1 ({test1_date})")
-                ax1p.legend()
-                st.pyplot(fig1p); st.download_button("💾 PNG Test 1 (%)", data=fig_to_png_bytes(fig1p), file_name="test1_graph_pct.png", mime="image/png"); plt.close(fig1p)
 
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -541,7 +524,7 @@ with tabs[0]:
         uploaded_file2 = st.file_uploader("Fichier Test 2 (FIT, GPX, CSV)", type=["fit", "gpx", "csv"], key="file2")
         test2_date = st.date_input("📅 Date du test 2", value=date.today(), key="date2")
 
-        show_test2 = st.checkbox("☑️ Afficher Test 2 dans le graphique combiné", value=True, key="show_t2")
+        show_test2 = st.checkbox("☑️ Afficher Test 2 dans le combiné", value=True, key="show_t2")
 
         if uploaded_file2:
             try:
@@ -610,281 +593,237 @@ with tabs[0]:
                 ax2.legend()
                 st.pyplot(fig2); st.download_button("💾 PNG Test 2", data=fig_to_png_bytes(fig2), file_name="test2_graph.png", mime="image/png"); plt.close(fig2)
 
-                # % relatif au début
-                hr0 = max(1e-6, float(interval_df2["hr_smooth"].iloc[0]))
-                interval_df2 = interval_df2.copy()
-                interval_df2["hr_pct"] = 100.0 * interval_df2["hr_smooth"] / hr0
-
-                fig2p, ax2p = plt.subplots()
-                ax2p.plot(interval_df2["time_s"] - start_sec2, interval_df2["hr_pct"], label="FC relative (%)", color=COLOR_RED)
-                ax2p.set_xlabel("Temps segment (s)")
-                ax2p.set_ylabel("FC (%)")
-                ax2p.set_title(f"Cinétique relative - Test 2 ({test2_date})")
-                ax2p.legend()
-                st.pyplot(fig2p); st.download_button("💾 PNG Test 2 (%)", data=fig_to_png_bytes(fig2p), file_name="test2_graph_pct.png", mime="image/png"); plt.close(fig2p)
-
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # ---- Graphique combiné (bpm & %) ----
+    # ---- Graphique combiné unique (bpm) ----
     st.markdown('<div class="report-card">', unsafe_allow_html=True)
-    st.subheader("Graphique combiné")
-    cgbpm, cgpct = st.columns(2)
-    with cgbpm:
-        show_bpm = st.checkbox("☑️ Afficher FC (bpm)", value=True)
-    with cgpct:
-        show_pct = st.checkbox("☑️ Afficher FC relative (%)", value=True)
+    st.subheader("Graphique combiné (bpm) — sélectionne les courbes à afficher")
 
-    if (interval_df1 is not None or interval_df2 is not None) and (show_bpm or show_pct):
-        # BPM
-        if show_bpm:
-            figC, axC = plt.subplots()
-            if show_test1 and interval_df1 is not None:
-                axC.plot(interval_df1["time_s"] - interval_df1["time_s"].iloc[0], interval_df1["hr_smooth"], label=f"Test 1 ({test1_date})", color=COLOR_RED)
-            if show_test2 and interval_df2 is not None:
-                axC.plot(interval_df2["time_s"] - interval_df2["time_s"].iloc[0], interval_df2["hr_smooth"], label=f"Test 2 ({test2_date})", color=COLOR_BLACK)
-            axC.set_xlabel("Temps segment (s)")
-            axC.set_ylabel("FC (bpm)")
-            axC.set_title("Comparaison des cinétiques (bpm)")
+    if (interval_df1 is not None) or (interval_df2 is not None):
+        figC, axC = plt.subplots()
+        any_curve = False
+        if show_test1 and interval_df1 is not None:
+            axC.plot(interval_df1["time_s"] - interval_df1["time_s"].iloc[0],
+                     interval_df1["hr_smooth"], label=f"Test 1 ({test1_date})", color=COLOR_RED)
+            any_curve = True
+        if show_test2 and interval_df2 is not None:
+            axC.plot(interval_df2["time_s"] - interval_df2["time_s"].iloc[0],
+                     interval_df2["hr_smooth"], label=f"Test 2 ({test2_date})", color=COLOR_BLACK)
+            any_curve = True
+
+        axC.set_xlabel("Temps segment (s)")
+        axC.set_ylabel("FC (bpm)")
+        axC.set_title("Comparaison des cinétiques (bpm)")
+        if any_curve:
             axC.legend()
-            st.pyplot(figC)
-            st.download_button("💾 PNG combiné (bpm)", data=fig_to_png_bytes(figC), file_name="combine_bpm.png", mime="image/png")
-            plt.close(figC)
-
-        # %
-        if show_pct:
-            figCp, axCp = plt.subplots()
-            if show_test1 and interval_df1 is not None:
-                hr01 = max(1e-6, float(interval_df1["hr_smooth"].iloc[0]))
-                axCp.plot(interval_df1["time_s"] - interval_df1["time_s"].iloc[0], 100.0 * interval_df1["hr_smooth"]/hr01, label=f"Test 1 (%)", color=COLOR_BLACK)
-            if show_test2 and interval_df2 is not None:
-                hr02 = max(1e-6, float(interval_df2["hr_smooth"].iloc[0]))
-                axCp.plot(interval_df2["time_s"] - interval_df2["time_s"].iloc[0], 100.0 * interval_df2["hr_smooth"]/hr02, label=f"Test 2 (%)", color=COLOR_RED)
-            axCp.set_xlabel("Temps segment (s)")
-            axCp.set_ylabel("FC relative (%)")
-            axCp.set_title("Comparaison des cinétiques (relative au début)")
-            axCp.legend()
-            st.pyplot(figCp)
-            st.download_button("💾 PNG combiné (%)", data=fig_to_png_bytes(figCp), file_name="combine_pct.png", mime="image/png")
-            plt.close(figCp)
+        st.pyplot(figC)
+        st.download_button("💾 PNG combiné (bpm)", data=fig_to_png_bytes(figC), file_name="combine_bpm.png", mime="image/png")
+        plt.close(figC)
     else:
         st.info("Importe au moins un test et coche les options d’affichage.")
 
     st.markdown('</div>', unsafe_allow_html=True)
+# =============== APP ========================
+st.title("🏃‍♂️ Analyse de Tests d'Endurance + Vitesse Critique")
 
-# ---------- Onglet 2 : Analyse entraînement ----------
-with tabs[1]:
-    st.header("⚙️ Analyse entraînement")
+tabs = st.tabs(["🧪 Tests d'endurance", "⚙️ Analyse entraînement", "📊 Analyse générale"])
 
-    if "training_intervals" not in st.session_state:
-        st.session_state.training_intervals = []  # liste de dicts
+# Variables partagées
+interval_df1 = stats1 = None
+interval_df2 = stats2 = None
+drift1_bpm = drift2_bpm = None
+drift1_pct = drift2_pct = None
+dist1_m = dist2_m = None
+t1_s = t2_s = None
+test1_date = test2_date = None
+start_sec1 = start_sec2 = 0
 
-    # Ajouter un intervalle
-    with st.form("add_interval_form"):
-        st.markdown("### ➕ Ajouter un intervalle")
-        source = st.selectbox("Source de l'intervalle", options=["Test 1", "Test 2"])
-        start_str = st.text_input("Début (hh:mm:ss)", value="0:00:00")
-        end_str = st.text_input("Fin (hh:mm:ss)", value="0:03:00")
-        add_btn = st.form_submit_button("Ajouter à la liste")
+# ---------- Onglet 1 : Tests fusionnés ----------
+with tabs[0]:
+    st.header("🧪 Tests d'endurance")
 
-    # Fonction pour extraire et calculer
-    def extract_interval(source_label, start_str, end_str):
-        if source_label == "Test 1":
-            if interval_df1 is None:
-                st.warning("Test 1 non disponible.")
-                return None
-            src = interval_df1
-        else:
-            if interval_df2 is None:
-                st.warning("Test 2 non disponible.")
-                return None
-            src = interval_df2
-        try:
-            s = parse_time_to_seconds(start_str)
-            e = parse_time_to_seconds(end_str)
-        except:
-            st.warning("Format temps invalide (hh:mm:ss).")
-            return None
-        if e <= s:
-            st.warning("Fin doit être > début.")
-            return None
-        seg = src[(src["time_s"] - src["time_s"].iloc[0] >= s) & (src["time_s"] - src["time_s"].iloc[0] <= e)]
-        if len(seg) < 10:
-            st.warning("Segment trop court / inexistant.")
-            return None
-        stats, drift_bpm, drift_pct = analyze_heart_rate(seg)
-        dist_m = segment_distance_m(seg)
-        t_s = float(e - s)
-        v_kmh = 3.6 * (dist_m / t_s) if t_s > 0 else 0.0
-        hr0 = max(1e-6, float(seg["hr_smooth"].iloc[0]))
-        seg = seg.copy()
-        seg["hr_pct"] = 100.0 * seg["hr_smooth"]/hr0
-        return {
-            "Afficher": True,
-            "Source": source_label,
-            "Début": start_str,
-            "Fin": end_str,
-            "Durée (s)": round(t_s, 1),
-            "FC moy (bpm)": stats["FC moyenne (bpm)"],
-            "Dérive (bpm/min)": stats["Dérive (bpm/min)"],
-            "Dérive (%/min)": stats["Dérive (%/min)"],
-            "Distance (m)": round(dist_m, 1),
-            "Vitesse (km/h)": round(v_kmh, 2),
-            "_curve_time": (seg["time_s"] - seg["time_s"].iloc[0]).values,
-            "_curve_bpm": seg["hr_smooth"].values,
-            "_curve_pct": seg["hr_pct"].values
-        }
-
-    if add_btn:
-        item = extract_interval(source, start_str, end_str)
-        if item is not None:
-            st.session_state.training_intervals.append(item)
-            st.success("Intervalle ajouté.")
-
-    # Tableau des intervalles
-    if st.session_state.training_intervals:
-        st.markdown("### Intervalles ajoutés")
-        df_show = pd.DataFrame([{k: v for k, v in d.items() if not k.startswith("_curve_")} for d in st.session_state.training_intervals])
-        edited = st.data_editor(df_show, use_container_width=True, key="train_editor")
-        # Appliquer modifs (seulement colonnes éditables : Afficher)
-        for i, row in edited.iterrows():
-            st.session_state.training_intervals[i]["Afficher"] = bool(row["Afficher"])
-
-        # Graphiques superposés des intervalles cochés
-        showB, showP = st.columns(2)
-        with showB:
-            show_bpm_i = st.checkbox("☑️ Superposer intervalles (bpm)", value=True, key="show_bpm_i")
-        with showP:
-            show_pct_i = st.checkbox("☑️ Superposer intervalles (%)", value=True, key="show_pct_i")
-
-        if show_bpm_i:
-            figI, axI = plt.subplots()
-            for it in st.session_state.training_intervals:
-                if it["Afficher"]:
-                    axI.plot(it["_curve_time"], it["_curve_bpm"], label=f"{it['Source']} {it['Début']}→{it['Fin']}")
-            axI.set_xlabel("Temps intervalle (s)")
-            axI.set_ylabel("FC (bpm)")
-            axI.set_title("Intervalles superposés (bpm)")
-            axI.legend(fontsize=8)
-            st.pyplot(figI)
-            st.download_button("💾 PNG intervalles (bpm)", data=fig_to_png_bytes(figI), file_name="intervalles_bpm.png", mime="image/png")
-            plt.close(figI)
-
-        if show_pct_i:
-            figIp, axIp = plt.subplots()
-            for it in st.session_state.training_intervals:
-                if it["Afficher"]:
-                    axIp.plot(it["_curve_time"], it["_curve_pct"], label=f"{it['Source']} {it['Début']}→{it['Fin']}")
-            axIp.set_xlabel("Temps intervalle (s)")
-            axIp.set_ylabel("FC relative (%)")
-            axIp.set_title("Intervalles superposés (relative au début)")
-            axIp.legend(fontsize=8)
-            st.pyplot(figIp)
-            st.download_button("💾 PNG intervalles (%)", data=fig_to_png_bytes(figIp), file_name="intervalles_pct.png", mime="image/png")
-            plt.close(figIp)
-
-        cbuttons = st.columns(2)
-        if cbuttons[0].button("🗑️ Vider la liste"):
-            st.session_state.training_intervals = []
-            st.experimental_rerun()
-    else:
-        st.info("Ajoute des intervalles avec le bouton ➕ puis superpose-les sur les graphiques.")
-
-# ---------- Onglet 3 : Analyse générale ----------
-with tabs[2]:
-    st.header("📊 Analyse générale : VC, Index de cinétique & Rapport PNG")
-
-    vc_dict = None
-    IC_value = None
-    IC_unite = None
-    IC_msg = None
-    IC_reco = None
-
-    if (interval_df1 is not None) and (interval_df2 is not None) and (t1_s and t2_s) and (dist1_m and dist2_m):
-        # Définir "court" et "long" par durée
-        if t1_s <= t2_s:
-            drift_short_bpm, drift_long_bpm = drift1_bpm, drift2_bpm
-            drift_short_pct, drift_long_pct = drift1_pct, drift2_pct
-            label_short, label_long = "Test 1", "Test 2"
-        else:
-            drift_short_bpm, drift_long_bpm = drift2_bpm, drift1_bpm
-            drift_short_pct, drift_long_pct = drift2_pct, drift1_pct
-            label_short, label_long = "Test 2", "Test 1"
-
-        # VC 2 points
-        D1, T1 = float(dist1_m), float(t1_s)
-        D2, T2 = float(dist2_m), float(t2_s)
-
-        if (T2 != T1) and (D1 > 0 and D2 > 0 and T1 > 0 and T2 > 0):
-            CS = (D2 - D1) / (T2 - T1)
-            D_prime = D1 - CS * T1
-            V_kmh = CS * 3.6
-            if V_kmh > 0 and math.isfinite(V_kmh):
-                pace = format_pace_min_per_km(V_kmh)
-                pace_str = f"{pace[0]}:{pace[1]:02d} min/km" if pace else "—"
-                vc_dict = {"CS": CS, "V_kmh": V_kmh, "D_prime": D_prime, "pace_str": pace_str}
-
-        # Index de cinétique (IC) + reco
-        IC_value, IC_unite, IC_msg, _, IC_reco = compute_index_cinetique(
-            drift_short_pct, drift_long_pct, drift_short_bpm, drift_long_bpm
-        )
-
-        # Tableaux comparatifs
+    ctop = st.columns(2)
+    # ---- Carte Test 1
+    with ctop[0]:
         st.markdown('<div class="report-card">', unsafe_allow_html=True)
-        st.subheader("🧾 Synthèse")
-        # Tableau VC & IC
-        tab_synth = []
-        if vc_dict:
-            tab_synth += [
-                {"Bloc":"VC/CS","Clé":"CS (m/s)","Valeur":f"{vc_dict['CS']:.2f}"},
-                {"Bloc":"VC/CS","Clé":"VC (km/h)","Valeur":f"{vc_dict['V_kmh']:.2f}"},
-                {"Bloc":"VC/CS","Clé":"Allure VC","Valeur":vc_dict["pace_str"]},
-                {"Bloc":"VC/CS","Clé":"D′ (m)","Valeur":f"{vc_dict['D_prime']:.0f}"}
-            ]
-        if IC_value is not None:
-            tab_synth += [
-                {"Bloc":"Index de cinétique","Clé":"IC","Valeur":f"{IC_value:.3f}"},
-                {"Bloc":"Index de cinétique","Clé":"Unité","Valeur":IC_unite},
-                {"Bloc":"Index de cinétique","Clé":"Note","Valeur":IC_msg}
-            ]
-        if tab_synth:
-            st.markdown('<div class="table-box">', unsafe_allow_html=True)
-            st.dataframe(pd.DataFrame(tab_synth), use_container_width=True, hide_index=True)
-            st.markdown('</div>', unsafe_allow_html=True)
+        st.subheader("Test 1")
+        uploaded_file1 = st.file_uploader("Fichier Test 1 (FIT, GPX, CSV)", type=["fit", "gpx", "csv"], key="file1")
+        test1_date = st.date_input("📅 Date du test 1", value=date.today(), key="date1")
 
-        # Graph comparatif (bpm)
-        figC, axC = plt.subplots()
-        axC.plot(interval_df1["time_s"] - interval_df1["time_s"].iloc[0],
-                 interval_df1["hr_smooth"], label=f"Test 1 ({test1_date})", color=COLOR_RED)
-        axC.plot(interval_df2["time_s"] - interval_df2["time_s"].iloc[0],
-                 interval_df2["hr_smooth"], label=f"Test 2 ({test2_date})", color=COLOR_BLACK)
-        axC.set_xlabel("Temps segment (s)"); axC.set_ylabel("FC (bpm)")
-        axC.set_title("Comparaison des cinétiques cardiaques (bpm)"); axC.legend()
-        st.pyplot(figC); st.download_button("💾 PNG comparatif (bpm)", data=fig_to_png_bytes(figC), file_name="comparatif_bpm.png", mime="image/png"); plt.close(figC)
+        show_test1 = st.checkbox("☑️ Afficher Test 1 dans le combiné", value=True, key="show_t1")
 
-        # Graph comparatif (%) — relatif au début de chaque segment
-        figCp, axCp = plt.subplots()
-        hr01 = max(1e-6, float(interval_df1["hr_smooth"].iloc[0])); hr02 = max(1e-6, float(interval_df2["hr_smooth"].iloc[0]))
-        axCp.plot(interval_df1["time_s"] - interval_df1["time_s"].iloc[0], 100.0*interval_df1["hr_smooth"]/hr01,
-                  label=f"Test 1 (%)", color=COLOR_BLACK)
-        axCp.plot(interval_df2["time_s"] - interval_df2["time_s"].iloc[0], 100.0*interval_df2["hr_smooth"]/hr02,
-                  label=f"Test 2 (%)", color=COLOR_RED)
-        axCp.set_xlabel("Temps segment (s)"); axCp.set_ylabel("FC relative (%)")
-        axCp.set_title("Comparaison des cinétiques (relative au début)"); axCp.legend()
-        st.pyplot(figCp); st.download_button("💾 PNG comparatif (%)", data=fig_to_png_bytes(figCp), file_name="comparatif_pct.png", mime="image/png"); plt.close(figCp)
+        if uploaded_file1:
+            try:
+                df1 = load_activity(uploaded_file1)
+            except Exception as e:
+                st.error(f"Erreur fichier 1 : {e}")
+                st.markdown('</div>', unsafe_allow_html=True)
+                st.stop()
 
-        st.markdown('<hr/>', unsafe_allow_html=True)
-        st.subheader("🖼️ Rapport complet (PNG)")
+            df1["timestamp"] = pd.to_datetime(df1["timestamp"], errors="coerce")
+            df1 = df1.dropna(subset=["timestamp"])
 
-        full_report_png = render_full_report_png(
-            title="Rapport complet – Endurance & VC (Rouge/Noir/Blanc)",
-            date1=test1_date, date2=test2_date,
-            interval_df1=interval_df1, start_sec1=start_sec1, stats1=stats1, dist1_m=dist1_m, t1_s=t1_s,
-            interval_df2=interval_df2, start_sec2=start_sec2, stats2=stats2, dist2_m=dist2_m, t2_s=t2_s,
-            vc_dict=vc_dict,
-            IC_value=IC_value, IC_unite=IC_unite, IC_msg=IC_msg, IC_reco=IC_reco
-        )
-        st.download_button("💾 Télécharger le RAPPORT COMPLET (PNG)", data=full_report_png,
-                           file_name="rapport_complet_endurance_vc.png", mime="image/png")
+            lag1 = st.slider("Correction du décalage capteur (s)", 0, 10, 0, key="lag1")
+            df1["timestamp"] = df1["timestamp"] - pd.to_timedelta(lag1, unit="s")
+
+            df1, window_sec1, total_dur1, pauses1 = smooth_hr(df1)
+            st.caption(f"Durée détectée : {total_dur1:.1f}s • Lissage : {window_sec1}s • Pauses : {pauses1}")
+
+            c11, c12 = st.columns(2)
+            with c11:
+                start_str1 = st.text_input("Début (hh:mm:ss)", value="0:00:00", key="start1")
+            with c12:
+                end_str1 = st.text_input("Fin (hh:mm:ss)", value="0:12:00", key="end1")
+
+            try:
+                start_sec1 = parse_time_to_seconds(start_str1)
+                end_sec1 = parse_time_to_seconds(end_str1)
+            except:
+                st.error("Format temps invalide (hh:mm:ss).")
+                st.markdown('</div>', unsafe_allow_html=True)
+                st.stop()
+
+            if end_sec1 <= start_sec1:
+                st.error("La fin doit être supérieure au début.")
+                st.markdown('</div>', unsafe_allow_html=True)
+                st.stop()
+
+            if end_sec1 > df1["time_s"].max():
+                st.warning("⚠️ Fin > données disponibles. Limitation automatique (Test 1).")
+                end_sec1 = df1["time_s"].max()
+
+            interval_df1 = df1[(df1["time_s"] >= start_sec1) & (df1["time_s"] <= end_sec1)]
+
+            if len(interval_df1) > 10:
+                stats1, drift1_bpm, drift1_pct = analyze_heart_rate(interval_df1)
+                dist1_m = segment_distance_m(interval_df1)
+                t1_s = float(end_sec1 - start_sec1)
+                v1_kmh = 3.6 * (dist1_m / t1_s) if t1_s > 0 else 0.0
+
+                # Tableau métriques
+                table1 = pd.DataFrame({
+                    "Métrique": ["FC moyenne (bpm)", "FC max (bpm)", "Dérive (bpm/min)", "Dérive (%/min)", "Durée (s)", "Distance (m)", "Vitesse moy (km/h)"],
+                    "Valeur": [stats1['FC moyenne (bpm)'], stats1['FC max (bpm)'], stats1['Dérive (bpm/min)'],
+                               stats1['Dérive (%/min)'], stats1['Durée segment (s)'], round(dist1_m,1), round(v1_kmh,2)]
+                })
+                st.markdown('<div class="table-box">', unsafe_allow_html=True)
+                st.dataframe(table1, use_container_width=True, hide_index=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+
+                # Graphique individuel (bpm)
+                fig1, ax1 = plt.subplots()
+                ax1.plot(interval_df1["time_s"] - start_sec1, interval_df1["hr_smooth"], label="FC (bpm)", color=COLOR_RED)
+                ax1.set_xlabel("Temps segment (s)")
+                ax1.set_ylabel("FC (bpm)")
+                ax1.set_title(f"Cinétique cardiaque - Test 1 ({test1_date})")
+                ax1.legend()
+                st.pyplot(fig1); st.download_button("💾 PNG Test 1", data=fig_to_png_bytes(fig1), file_name="test1_graph.png", mime="image/png"); plt.close(fig1)
+
         st.markdown('</div>', unsafe_allow_html=True)
+
+    # ---- Carte Test 2
+    with ctop[1]:
+        st.markdown('<div class="report-card">', unsafe_allow_html=True)
+        st.subheader("Test 2")
+        uploaded_file2 = st.file_uploader("Fichier Test 2 (FIT, GPX, CSV)", type=["fit", "gpx", "csv"], key="file2")
+        test2_date = st.date_input("📅 Date du test 2", value=date.today(), key="date2")
+
+        show_test2 = st.checkbox("☑️ Afficher Test 2 dans le combiné", value=True, key="show_t2")
+
+        if uploaded_file2:
+            try:
+                df2 = load_activity(uploaded_file2)
+            except Exception as e:
+                st.error(f"Erreur fichier 2 : {e}")
+                st.markdown('</div>', unsafe_allow_html=True)
+                st.stop()
+
+            df2["timestamp"] = pd.to_datetime(df2["timestamp"], errors="coerce")
+            df2 = df2.dropna(subset=["timestamp"])
+
+            lag2 = st.slider("Correction du décalage capteur (s)", 0, 10, 0, key="lag2")
+            df2["timestamp"] = df2["timestamp"] - pd.to_timedelta(lag2, unit="s")
+
+            df2, window_sec2, total_dur2, pauses2 = smooth_hr(df2)
+            st.caption(f"Durée détectée : {total_dur2:.1f}s • Lissage : {window_sec2}s • Pauses : {pauses2}")
+
+            c21, c22 = st.columns(2)
+            with c21:
+                start_str2 = st.text_input("Début (hh:mm:ss)", value="0:00:00", key="start2")
+            with c22:
+                end_str2 = st.text_input("Fin (hh:mm:ss)", value="0:12:00", key="end2")
+
+            try:
+                start_sec2 = parse_time_to_seconds(start_str2)
+                end_sec2 = parse_time_to_seconds(end_str2)
+            except:
+                st.error("Format temps invalide (hh:mm:ss).")
+                st.markdown('</div>', unsafe_allow_html=True)
+                st.stop()
+
+            if end_sec2 <= start_sec2:
+                st.error("La fin doit être supérieure au début.")
+                st.markdown('</div>', unsafe_allow_html=True)
+                st.stop()
+
+            if end_sec2 > df2["time_s"].max():
+                st.warning("⚠️ Fin > données disponibles. Limitation automatique (Test 2).")
+                end_sec2 = df2["time_s"].max()
+
+            interval_df2 = df2[(df2["time_s"] >= start_sec2) & (df2["time_s"] <= end_sec2)]
+
+            if len(interval_df2) > 10:
+                stats2, drift2_bpm, drift2_pct = analyze_heart_rate(interval_df2)
+                dist2_m = segment_distance_m(interval_df2)
+                t2_s = float(end_sec2 - start_sec2)
+                v2_kmh = 3.6 * (dist2_m / t2_s) if t2_s > 0 else 0.0
+
+                # Tableau métriques
+                table2 = pd.DataFrame({
+                    "Métrique": ["FC moyenne (bpm)", "FC max (bpm)", "Dérive (bpm/min)", "Dérive (%/min)", "Durée (s)", "Distance (m)", "Vitesse moy (km/h)"],
+                    "Valeur": [stats2['FC moyenne (bpm)'], stats2['FC max (bpm)'], stats2['Dérive (bpm/min)'],
+                               stats2['Dérive (%/min)'], stats2['Durée segment (s)'], round(dist2_m,1), round(v2_kmh,2)]
+                })
+                st.markdown('<div class="table-box">', unsafe_allow_html=True)
+                st.dataframe(table2, use_container_width=True, hide_index=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+
+                # Graph bpm
+                fig2, ax2 = plt.subplots()
+                ax2.plot(interval_df2["time_s"] - start_sec2, interval_df2["hr_smooth"], label="FC (bpm)", color=COLOR_BLACK)
+                ax2.set_xlabel("Temps segment (s)")
+                ax2.set_ylabel("Fréquence cardiaque (bpm)")
+                ax2.set_title(f"Cinétique cardiaque - Test 2 ({test2_date})")
+                ax2.legend()
+                st.pyplot(fig2); st.download_button("💾 PNG Test 2", data=fig_to_png_bytes(fig2), file_name="test2_graph.png", mime="image/png"); plt.close(fig2)
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # ---- Graphique combiné unique (bpm) ----
+    st.markdown('<div class="report-card">', unsafe_allow_html=True)
+    st.subheader("Graphique combiné (bpm) — sélectionne les courbes à afficher")
+
+    if (interval_df1 is not None) or (interval_df2 is not None):
+        figC, axC = plt.subplots()
+        any_curve = False
+        if show_test1 and interval_df1 is not None:
+            axC.plot(interval_df1["time_s"] - interval_df1["time_s"].iloc[0],
+                     interval_df1["hr_smooth"], label=f"Test 1 ({test1_date})", color=COLOR_RED)
+            any_curve = True
+        if show_test2 and interval_df2 is not None:
+            axC.plot(interval_df2["time_s"] - interval_df2["time_s"].iloc[0],
+                     interval_df2["hr_smooth"], label=f"Test 2 ({test2_date})", color=COLOR_BLACK)
+            any_curve = True
+
+        axC.set_xlabel("Temps segment (s)")
+        axC.set_ylabel("FC (bpm)")
+        axC.set_title("Comparaison des cinétiques (bpm)")
+        if any_curve:
+            axC.legend()
+        st.pyplot(figC)
+        st.download_button("💾 PNG combiné (bpm)", data=fig_to_png_bytes(figC), file_name="combine_bpm.png", mime="image/png")
+        plt.close(figC)
     else:
-        st.info("Importe et définis les segments des deux tests pour activer la synthèse et le rapport.")
+        st.info("Importe au moins un test et coche les options d’affichage.")
+
+    st.markdown('</div>', unsafe_allow_html=True)
