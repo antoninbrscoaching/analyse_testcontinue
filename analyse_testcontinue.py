@@ -1,5 +1,5 @@
 # ============================
-# 🏃‍♂️ Analyse Endurance (Tests fusionnés) + VC + Index de cinétique + Entraînement (+ FIT) — VERSION SANS FC RELATIVE
+# 🏃‍♂️ Analyse Endurance (Tests fusionnés) + VC + Index de cinétique + Entraînement (multi-séances + IC par intervalle)
 # ============================
 
 import streamlit as st
@@ -626,166 +626,188 @@ with tabs[0]:
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-# ---------- Onglet 2 : Analyse entraînement ----------
+# ---------- Onglet 2 : Analyse entraînement (MODIFIÉ) ----------
 with tabs[1]:
-    st.header("⚙️ Analyse entraînement")
+    st.header("⚙️ Analyse entraînement (multi-séances + IC local par intervalle)")
 
-    # === Nouveau : importer un fichier d'entraînement indépendant (FIT/GPX/CSV)
+    # État persistant
+    if "sessions" not in st.session_state:
+        st.session_state.sessions = {}  # {nom_fichier: dataframe}
+    if "training_intervals" not in st.session_state:
+        st.session_state.training_intervals = []  # liste de dicts d’intervalles
+
+    # --- Import multi-séances ---
     st.markdown('<div class="report-card">', unsafe_allow_html=True)
-    st.subheader("Source entraînement (optionnelle)")
-    train_file = st.file_uploader("Fichier d'entraînement (FIT, GPX, CSV)", type=["fit", "gpx", "csv"], key="train_file")
-    train_df = None
-    if train_file:
-        try:
-            train_df = load_activity(train_file)
-            train_df["timestamp"] = pd.to_datetime(train_df["timestamp"], errors="coerce")
-            train_df = train_df.dropna(subset=["timestamp"])
-            lagT = st.slider("Correction du décalage capteur (s) — entraînement", 0, 10, 0, key="lagT")
-            train_df["timestamp"] = train_df["timestamp"] - pd.to_timedelta(lagT, unit="s")
-            train_df, window_secT, total_durT, pausesT = smooth_hr(train_df)
-            st.caption(f"Durée détectée : {total_durT:.1f}s • Lissage : {window_secT}s • Pauses : {pausesT}")
-        except Exception as e:
-            st.error(f"Erreur fichier entraînement : {e}")
-            train_df = None
+    st.subheader("📂 Importer des séances d'entraînement")
+    uploaded_sessions = st.file_uploader(
+        "Importer un ou plusieurs fichiers (FIT, GPX, CSV)",
+        type=["fit", "gpx", "csv"],
+        accept_multiple_files=True,
+        key="multi_sessions"
+    )
+    if uploaded_sessions:
+        for f in uploaded_sessions:
+            if f.name not in st.session_state.sessions:
+                try:
+                    df = load_activity(f)
+                    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+                    df = df.dropna(subset=["timestamp"])
+                    df, w, dur, pauses = smooth_hr(df)
+                    st.session_state.sessions[f.name] = df
+                    st.success(f"✅ {f.name} importé ({dur/60:.1f} min, {len(df)} points)")
+                except Exception as e:
+                    st.error(f"Erreur fichier {f.name} : {e}")
+
+    if st.session_state.sessions:
+        info = []
+        for name, df in st.session_state.sessions.items():
+            info.append({
+                "Séance": name,
+                "Durée (min)": round(df["time_s"].iloc[-1] / 60, 1),
+                "Nb points": len(df),
+                "FC moy (bpm)": round(df["heart_rate"].mean(), 1)
+            })
+        st.markdown('<div class="table-box">', unsafe_allow_html=True)
+        st.dataframe(pd.DataFrame(info), use_container_width=True, hide_index=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    else:
+        st.info("Importe une ou plusieurs séances pour commencer.")
     st.markdown('</div>', unsafe_allow_html=True)
 
-    if "training_intervals" not in st.session_state:
-        st.session_state.training_intervals = []  # liste de dicts
+    # --- Ajouter un intervalle (illimité) ---
+    if st.session_state.sessions:
+        with st.form("add_interval_form_train"):
+            st.markdown("### ➕ Ajouter un intervalle à analyser")
+            session_name = st.selectbox("Séance source", options=list(st.session_state.sessions.keys()))
+            c1, c2 = st.columns(2)
+            with c1:
+                start_str = st.text_input("Début (hh:mm:ss)", value="0:00:00", key="train_start")
+            with c2:
+                end_str = st.text_input("Fin (hh:mm:ss)", value="0:05:00", key="train_end")
+            add_btn = st.form_submit_button("Ajouter l'intervalle")
 
-    # Ajouter un intervalle
-    with st.form("add_interval_form"):
-        st.markdown("### ➕ Ajouter un intervalle")
-        source_opts = ["Test 1", "Test 2"]
-        if train_df is not None:
-            source_opts.append("Entraînement")
-        source = st.selectbox("Source de l'intervalle", options=source_opts)
-
-        cstart, cend = st.columns(2)
-        with cstart:
-            start_str = st.text_input("Début (hh:mm:ss)", value="0:00:00")
-        with cend:
-            end_str = st.text_input("Fin (hh:mm:ss)", value="0:03:00")
-
-        add_btn = st.form_submit_button("Ajouter à la liste")
-
-    # Fonction pour extraire et calculer (bpm uniquement)
-    def extract_interval(source_label, start_str, end_str):
-        if source_label == "Test 1":
-            if interval_df1 is None:
-                st.warning("Test 1 non disponible.")
+        def analyze_interval(session_name, start_str, end_str):
+            df = st.session_state.sessions.get(session_name)
+            if df is None:
+                st.warning("Séance introuvable.")
                 return None
-            src = interval_df1
-            src_name = f"Test 1"
-        elif source_label == "Test 2":
-            if interval_df2 is None:
-                st.warning("Test 2 non disponible.")
+            try:
+                s = parse_time_to_seconds(start_str)
+                e = parse_time_to_seconds(end_str)
+            except:
+                st.warning("Format temps invalide.")
                 return None
-            src = interval_df2
-            src_name = f"Test 2"
-        else:  # Entraînement
-            if train_df is None:
-                st.warning("Fichier d'entraînement non disponible.")
+            if e <= s:
+                st.warning("La fin doit être > début.")
                 return None
-            # On autorise la sélection sur l'axe temps continu du fichier entier
-            src = train_df.copy()
-            src_name = "Entraînement"
 
-        try:
-            s = parse_time_to_seconds(start_str)
-            e = parse_time_to_seconds(end_str)
-        except:
-            st.warning("Format temps invalide (hh:mm:ss).")
-            return None
-        if e <= s:
-            st.warning("Fin doit être > début.")
-            return None
+            df_seg = df[(df["time_s"] >= s) & (df["time_s"] <= e)].copy()
+            if len(df_seg) < 10:
+                st.warning("Segment trop court.")
+                return None
 
-        # Fenêtre dans la série : on interprète s/e comme secondes relatives au début de la source
-        t0 = src["time_s"].iloc[0]
-        sub = src[(src["time_s"] - t0 >= s) & (src["time_s"] - t0 <= e)]
-        if len(sub) < 10:
-            st.warning("Segment trop court / inexistant.")
-            return None
+            stats, drift_bpm, drift_pct = analyze_heart_rate(df_seg)
+            dist_m = segment_distance_m(df_seg)
+            t_s = e - s
+            v_kmh = 3.6 * (dist_m / t_s) if t_s > 0 else 0.0
 
-        stats, drift_bpm, drift_pct = analyze_heart_rate(sub)
-        dist_m = segment_distance_m(sub)
-        t_s = float(e - s)
-        v_kmh = 3.6 * (dist_m / t_s) if t_s > 0 else 0.0
+            # IC local pour l'intervalle (on expose directement la dérive comme index local)
+            ic_local_bpm = drift_bpm
+            ic_local_pct = drift_pct
 
-        # Courbes pour superposition
-        curve_time = (sub["time_s"] - sub["time_s"].iloc[0]).values
-        curve_bpm = sub["hr_smooth"].values
+            return {
+                "Séance": session_name,
+                "Début": start_str,
+                "Fin": end_str,
+                "Durée (s)": round(t_s, 1),
+                "FC moy (bpm)": stats["FC moyenne (bpm)"],
+                "FC max (bpm)": stats["FC max (bpm)"],
+                "Dérive (bpm/min)": stats["Dérive (bpm/min)"],
+                "Dérive (%/min)": stats["Dérive (%/min)"],
+                "Distance (m)": round(dist_m, 1),
+                "Vitesse (km/h)": round(v_kmh, 2),
+                "IC local (bpm/min)": round(ic_local_bpm, 4) if ic_local_bpm is not None else None,
+                "IC local (%/min)": round(ic_local_pct, 4) if ic_local_pct is not None else None,
+                "_curve_time": (df_seg["time_s"] - df_seg["time_s"].iloc[0]).values,
+                "_curve_bpm": df_seg["hr_smooth"].values,
+                "_id": f"{session_name} {start_str}→{end_str}",
+                "Afficher": True
+            }
 
-        return {
-            "ID": f"{src_name} {start_str}→{end_str}",
-            "Afficher": True,
-            "Source": source_label,
-            "Début": start_str,
-            "Fin": end_str,
-            "Durée (s)": round(t_s, 1),
-            "FC moy (bpm)": stats["FC moyenne (bpm)"],
-            "Dérive (bpm/min)": stats["Dérive (bpm/min)"],
-            "Dérive (%/min)": stats["Dérive (%/min)"],
-            "Distance (m)": round(dist_m, 1),
-            "Vitesse (km/h)": round(v_kmh, 2),
-            "_curve_time": curve_time,
-            "_curve_bpm": curve_bpm
-        }
+        if add_btn:
+            res = analyze_interval(session_name, start_str, end_str)
+            if res:
+                st.session_state.training_intervals.append(res)
+                st.success(f"Intervalle ajouté ({res['_id']})")
 
-    if add_btn:
-        item = extract_interval(source, start_str, end_str)
-        if item is not None:
-            st.session_state.training_intervals.append(item)
-            st.success("Intervalle ajouté.")
-
-    # Tableau des intervalles
+    # --- Tableau global des intervalles + export ---
     if st.session_state.training_intervals:
-        st.markdown("### Intervalles ajoutés")
-        df_show = pd.DataFrame([{k: v for k, v in d.items() if not k.startswith("_curve_")} for d in st.session_state.training_intervals])
-        edited = st.data_editor(df_show, use_container_width=True, key="train_editor")
-        # Appliquer modifs (seulement colonnes éditables : Afficher)
-        for i, row in edited.iterrows():
-            st.session_state.training_intervals[i]["Afficher"] = bool(row["Afficher"])
+        st.markdown('<div class="report-card">', unsafe_allow_html=True)
+        st.subheader("📋 Intervalles analysés (IC local inclus)")
 
-        # === 3 panneaux de graphiques, chacun peut superposer des courbes choisies ===
-        st.markdown("### 📈 Panneaux de graphiques (sélectionne les courbes à superposer)")
+        df_int = pd.DataFrame([
+            {k:v for k,v in d.items() if not k.startswith("_curve_") and not k.startswith("_id")}
+            for d in st.session_state.training_intervals
+        ])
+        st.markdown('<div class="table-box">', unsafe_allow_html=True)
+        st.dataframe(df_int, use_container_width=True, hide_index=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        st.download_button(
+            "💾 Exporter les intervalles (CSV)",
+            data=df_int.to_csv(index=False).encode("utf-8"),
+            file_name="analyse_intervalles.csv",
+            mime="text/csv"
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # --- 3 panneaux graphiques superposables ---
+        st.markdown("### 📈 Panneaux de graphiques (superpose les intervalles choisis)")
 
         def render_panel(panel_title, key_prefix):
             st.markdown(f'#### {panel_title}')
-            # liste d'IDs cochables
-            options = [d["ID"] for d in st.session_state.training_intervals]
-            default_selected = [d["ID"] for d in st.session_state.training_intervals if d["Afficher"]]
-            selected = st.multiselect("Courbes à afficher", options=options, default=default_selected, key=f"{key_prefix}_sel")
+            ids = [d["_id"] for d in st.session_state.training_intervals]
+            default_sel = [d["_id"] for d in st.session_state.training_intervals if d.get("Afficher", True)]
+            selected = st.multiselect("Courbes à afficher", options=ids, default=default_sel, key=f"{key_prefix}_sel")
             if not selected:
                 st.info("Sélectionne au moins une courbe.")
                 return
             fig, ax = plt.subplots()
-            for it in st.session_state.training_intervals:
-                if it["ID"] in selected:
-                    ax.plot(it["_curve_time"], it["_curve_bpm"], label=it["ID"])
+            for d in st.session_state.training_intervals:
+                if d["_id"] in selected:
+                    ax.plot(d["_curve_time"], d["_curve_bpm"], label=d["_id"])
             ax.set_xlabel("Temps intervalle (s)")
             ax.set_ylabel("FC (bpm)")
             ax.set_title(panel_title)
             ax.legend(fontsize=8)
             st.pyplot(fig)
-            st.download_button(f"💾 PNG {panel_title}", data=fig_to_png_bytes(fig),
-                               file_name=f"{panel_title.lower().replace(' ', '_')}.png", mime="image/png")
+            st.download_button(
+                f"💾 PNG {panel_title}",
+                data=fig_to_png_bytes(fig),
+                file_name=f"{panel_title.lower().replace(' ', '_')}.png",
+                mime="image/png"
+            )
             plt.close(fig)
 
-        # Trois panneaux indépendants
         render_panel("Panneau A", "panelA")
         render_panel("Panneau B", "panelB")
         render_panel("Panneau C", "panelC")
 
-        cbuttons = st.columns(2)
-        if cbuttons[0].button("🗑️ Vider la liste"):
+        c1, c2 = st.columns(2)
+        if c1.button("🗑️ Vider les intervalles"):
             st.session_state.training_intervals = []
             try:
                 st.experimental_rerun()
             except Exception:
                 st.rerun()
+        if c2.button("🗑️ Vider les séances"):
+            st.session_state.sessions = {}
+            try:
+                st.experimental_rerun()
+            except Exception:
+                st.rerun()
     else:
-        st.info("Ajoute des intervalles (depuis Test 1, Test 2 ou Entraînement) avec le bouton ➕ puis superpose-les dans un ou plusieurs panneaux.")
+        st.info("Ajoute des intervalles (depuis les séances importées) pour afficher les résultats et l'IC local.")
 
 # ---------- Onglet 3 : Analyse générale ----------
 with tabs[2]:
@@ -821,7 +843,7 @@ with tabs[2]:
                 pace_str = f"{pace[0]}:{pace[1]:02d} min/km" if pace else "—"
                 vc_dict = {"CS": CS, "V_kmh": V_kmh, "D_prime": D_prime, "pace_str": pace_str}
 
-        # Index de cinétique (IC) + reco
+        # Index de cinétique (IC) + reco (comparatif court vs long)
         IC_value, IC_unite, IC_msg, _, IC_reco = compute_index_cinetique(
             drift_short_pct, drift_long_pct, drift_short_bpm, drift_long_bpm
         )
@@ -829,7 +851,6 @@ with tabs[2]:
         # Tableaux comparatifs
         st.markdown('<div class="report-card">', unsafe_allow_html=True)
         st.subheader("🧾 Synthèse")
-        # Tableau VC & IC
         tab_synth = []
         if vc_dict:
             tab_synth += [
@@ -840,7 +861,7 @@ with tabs[2]:
             ]
         if IC_value is not None:
             tab_synth += [
-                {"Bloc":"Index de cinétique","Clé":"IC","Valeur":f"{IC_value:.3f}"},
+                {"Bloc":"Index de cinétique","Clé":"IC (comparatif)","Valeur":f"{IC_value:.3f}"},
                 {"Bloc":"Index de cinétique","Clé":"Unité","Valeur":IC_unite},
                 {"Bloc":"Index de cinétique","Clé":"Note","Valeur":IC_msg}
             ]
@@ -849,7 +870,7 @@ with tabs[2]:
             st.dataframe(pd.DataFrame(tab_synth), use_container_width=True, hide_index=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-        # Graph comparatif (bpm) — (pas de % relatif)
+        # Graph comparatif (bpm)
         figC, axC = plt.subplots()
         axC.plot(interval_df1["time_s"] - interval_df1["time_s"].iloc[0],
                  interval_df1["hr_smooth"], label=f"Test 1 ({test1_date})", color=COLOR_RED)
