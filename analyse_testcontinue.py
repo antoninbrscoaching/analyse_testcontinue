@@ -714,24 +714,40 @@ with tabs[1]:
             st.markdown(f"### 📂 {fname}")
             st.caption(f"Durée : {dur:.1f}s • Lissage {window}s • Pauses : {pauses}")
 
-            # Liste d’intervalles déjà définis
-            existing = st.session_state.training_intervals.get(fname, [])
+        # Liste d’intervalles déjà définis
+existing = st.session_state.training_intervals.get(fname, [])
 
-            for i, (start_s, end_s) in enumerate(existing):
-                c1, c2, c3 = st.columns([1, 1, 0.4])
-                with c1:
-                    s_str = st.text_input(f"Début (hh:mm:ss) – intervalle {i+1}", value=f"{int(start_s//60)}:{int(start_s%60):02d}", key=f"{fname}_start_{i}")
-                with c2:
-                    e_str = st.text_input(f"Fin (hh:mm:ss)", value=f"{int(end_s//60)}:{int(end_s%60):02d}", key=f"{fname}_end_{i}")
-                with c3:
-                  
-            if st.button("🗑️", key=f"del_{fname}_{i}"):
-    st.session_state.training_intervals[fname].pop(i)
-    st.rerun()
+for i, (start_s, end_s) in enumerate(existing):
+    c1, c2, c3 = st.columns([1, 1, 0.4])
+    with c1:
+        s_str = st.text_input(
+            f"Début (hh:mm:ss) – intervalle {i+1}",
+            value=f"{int(start_s//60)}:{int(start_s%60):02d}",
+            key=f"{fname}_start_{i}"
+        )
+    with c2:
+        e_str = st.text_input(
+            "Fin (hh:mm:ss)",
+            value=f"{int(end_s//60)}:{int(end_s%60):02d}",
+            key=f"{fname}_end_{i}"
+        )
+    with c3:
+        if st.button("🗑️", key=f"del_{fname}_{i}"):
+            st.session_state.training_intervals[fname].pop(i)
+            st.rerun()
+
+    try:
+        s_sec = parse_time_to_seconds(s_str)
+        e_sec = parse_time_to_seconds(e_str)
+        if e_sec > s_sec:
+            existing[i] = (s_sec, e_sec)
+    except:
+        st.warning(f"⛔ Format invalide intervalle {i+1}")
 
 if st.button(f"➕ Ajouter un intervalle ({fname})"):
     st.session_state.training_intervals[fname].append((0, 300))
     st.rerun()
+
 
                 try:
                     s_sec = parse_time_to_seconds(s_str)
