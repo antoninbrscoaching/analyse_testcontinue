@@ -82,26 +82,13 @@ def load_activity(file):
         except Exception as e:
             raise ValueError(f"Erreur lecture FIT : {e}")
 
-    elif name.endswith(".gpx"):
-        gpx = gpxpy.parse(file)
-        data = []
-        for track in gpx.tracks:
-            for seg in track.segments:
-                for p in seg.points:
-                    data.append({
-                        "time": p.time,
-                        "lat": p.latitude,
-                        "lon": p.longitude,
-                        "alt": p.elevation
-                    })
-        df = pd.DataFrame(data)
-
         elif name.endswith(".tcx"):
         try:
+            # Lecture et nettoyage du contenu XML
             content = file.read().decode("utf-8", errors="ignore")
             root = ET.fromstring(content)
 
-            # Gestion de namespace automatique
+            # Détection automatique du namespace
             ns = {}
             for k, v in root.attrib.items():
                 if "xmlns" in k:
@@ -134,7 +121,6 @@ def load_activity(file):
                 raise ValueError("Aucune donnée détectée dans le TCX.")
         except Exception as e:
             raise ValueError(f"Erreur lecture TCX : {e}")
-
 
     else:
         raise ValueError("Format non supporté (.fit, .gpx, .csv, .tcx uniquement)")
