@@ -17,6 +17,7 @@ import math
 from io import BytesIO
 from datetime import date
 import matplotlib as mpl
+import xml.etree.ElementTree as ET  # ✅ pour lecture TCX
 
 # =============== UI / THEME =================
 st.set_page_config(page_title="Analyse Endurance + VC (PDF)", layout="wide")
@@ -63,10 +64,11 @@ hr { border: none; border-top: 1px solid #eee; margin: 1.2rem 0; }
 </style>
 """, unsafe_allow_html=True)
 
+
 # =============== UTILS ======================
 
 def load_activity(file):
-    """Charge un fichier FIT, GPX ou CSV (robuste avec fitdecode)."""
+    """Charge un fichier FIT, GPX, CSV ou TCX (robuste avec fitdecode)."""
     if file.name.endswith(".csv"):
         df = pd.read_csv(file)
 
@@ -96,8 +98,39 @@ def load_activity(file):
                         "alt": point.elevation
                     })
         df = pd.DataFrame(data)
+
+    elif file.name.endswith(".tcx"):
+        # ✅ Lecture des fichiers TCX (Garmin / Strava / Coros)
+        try:
+            tree = ET.parse(file)
+            root = tree.getroot()
+            ns = {"tcx": "http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2"}
+            data = []
+            for tp in root.findall(".//tcx:Trackpoint", ns):
+                time = tp.find("tcx:Time", ns)
+                hr = tp.find("tcx:HeartRateBpm/tcx:Value", ns)
+                dist = tp.find("tcx:DistanceMeters", ns)
+                alt = tp.find("tcx:AltitudeMeters", ns)
+                power = tp.find("tcx:Extensions//tcx:Watts", ns)
+                pos = tp.find("tcx:Position", ns)
+                lat = pos.find("tcx:LatitudeDegrees", ns).text if pos is not None and pos.find("tcx:LatitudeDegrees", ns) is not None else None
+                lon = pos.find("tcx:LongitudeDegrees", ns).text if pos is not None and pos.find("tcx:LongitudeDegrees", ns) is not None else None
+
+                data.append({
+                    "timestamp": time.text if time is not None else None,
+                    "heart_rate": float(hr.text) if hr is not None else None,
+                    "distance": float(dist.text) if dist is not None else None,
+                    "alt": float(alt.text) if alt is not None else None,
+                    "power": float(power.text) if power is not None else None,
+                    "lat": float(lat) if lat else None,
+                    "lon": float(lon) if lon else None
+                })
+            df = pd.DataFrame(data)
+        except Exception as e:
+            raise ValueError(f"Erreur lecture TCX : {e}")
+
     else:
-        raise ValueError("Format non supporté.")
+        raise ValueError("Format non supporté (.fit, .gpx, .csv, .tcx uniquement).")
 
     # Harmoniser la colonne temps -> 'timestamp'
     for c in df.columns:
@@ -105,7 +138,6 @@ def load_activity(file):
             df.rename(columns={c: "timestamp"}, inplace=True)
             break
 
-    # Validation minimale
     if "heart_rate" not in df.columns:
         raise ValueError("Le fichier ne contient pas de fréquence cardiaque ('heart_rate').")
 
@@ -117,7 +149,7 @@ def load_activity(file):
             df[c] = pd.to_numeric(df[c], errors="coerce")
 
     return df
-
+  
 
 def get_speed_col(df):
     """Retourne le nom de la vitesse (m/s) si dispo."""
