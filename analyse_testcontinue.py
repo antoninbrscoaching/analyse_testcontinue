@@ -84,7 +84,7 @@ def load_activity(file):
         except Exception as e:
             raise ValueError(f"Erreur lecture FIT : {e}")
 
-    elif file.name.endswith(".gpx"):
+    elif file.name.endswith(".gpx") or file.name.endswith(".GPX"):
         import gpxpy
         gpx = gpxpy.parse(file)
         data = []
@@ -99,8 +99,8 @@ def load_activity(file):
                     })
         df = pd.DataFrame(data)
 
-    elif file.name.endswith(".tcx"):
-        # ✅ Lecture des fichiers TCX (Garmin / Strava / Coros)
+    elif file.name.endswith(".tcx") or file.name.endswith(".TCX"):
+        # ✅ Lecture TCX (Garmin / Coros / Strava)
         try:
             tree = ET.parse(file)
             root = tree.getroot()
@@ -149,6 +149,57 @@ def load_activity(file):
             df[c] = pd.to_numeric(df[c], errors="coerce")
 
     return df
+
+
+# =============== AJOUTS : extensions reconnues partout ======================
+# ✅ Extensions universelles (avec majuscules/minuscules)
+ACCEPTED_TYPES = ["fit", "FIT", "gpx", "GPX", "csv", "CSV", "tcx", "TCX"]
+
+# =============== APP ========================
+st.title("🏃‍♂️ Analyse de Tests d'Endurance + Vitesse Critique (Export PDF)")
+
+tabs = st.tabs(["🧪 Tests d'endurance", "⚙️ Analyse entraînement", "📊 Analyse générale"])
+
+# ---------- Onglet 1 : Tests fusionnés ----------
+with tabs[0]:
+    st.header("🧪 Tests d'endurance")
+
+    ctop = st.columns(2)
+    # ---- Test 1
+    with ctop[0]:
+        st.markdown('<div class="report-card">', unsafe_allow_html=True)
+        st.subheader("Test 1")
+        uploaded_file1 = st.file_uploader(
+            "Fichier Test 1 (FIT, GPX, CSV, TCX)",
+            type=ACCEPTED_TYPES,
+            key="file1"
+        )
+        # (reste de ton bloc test 1 inchangé…)
+
+    # ---- Test 2
+    with ctop[1]:
+        st.markdown('<div class="report-card">', unsafe_allow_html=True)
+        st.subheader("Test 2")
+        uploaded_file2 = st.file_uploader(
+            "Fichier Test 2 (FIT, GPX, CSV, TCX)",
+            type=ACCEPTED_TYPES,
+            key="file2"
+        )
+        # (reste du bloc test 2 inchangé…)
+
+# ---------- Onglet 2 : Analyse entraînement ----------
+with tabs[1]:
+    st.header("⚙️ Analyse entraînement (multi-séances + IC local + FC/Allure/Puissance)")
+    uploaded_sessions = st.file_uploader(
+        "Importer un ou plusieurs fichiers (FIT, GPX, CSV, TCX)",
+        type=ACCEPTED_TYPES,
+        accept_multiple_files=True,
+        key="multi_sessions"
+    )
+    # (reste inchangé ici…)
+
+# ---------- Onglet 3 : Analyse générale ----------
+# (ton code original inchangé)
   
 
 def get_speed_col(df):
