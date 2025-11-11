@@ -724,9 +724,9 @@ with tabs[1]:
                 with c2:
                     e_str = st.text_input(f"Fin (hh:mm:ss)", value=f"{int(end_s//60)}:{int(end_s%60):02d}", key=f"{fname}_end_{i}")
                 with c3:
-                    if st.button("🗑️", key=f"del_{fname}_{i}"):
+                   if st.button("🗑️", key=f"del_{fname}_{i}"):
     st.session_state.training_intervals[fname].pop(i)
-    st.experimental_rerun()
+    st.rerun()
   
                 try:
                     s_sec = parse_time_to_seconds(s_str)
