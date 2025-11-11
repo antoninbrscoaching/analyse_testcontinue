@@ -82,7 +82,21 @@ def load_activity(file):
         except Exception as e:
             raise ValueError(f"Erreur lecture FIT : {e}")
 
-        elif name.endswith(".tcx"):
+    elif name.endswith(".gpx"):
+        gpx = gpxpy.parse(file)
+        data = []
+        for track in gpx.tracks:
+            for segment in track.segments:
+                for point in segment.points:
+                    data.append({
+                        "timestamp": point.time,
+                        "lat": point.latitude,
+                        "lon": point.longitude,
+                        "alt": point.elevation
+                    })
+        df = pd.DataFrame(data)
+
+    elif name.endswith(".tcx"):
         try:
             # Lecture et nettoyage du contenu XML
             content = file.read().decode("utf-8", errors="ignore")
