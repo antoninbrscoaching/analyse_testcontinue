@@ -714,7 +714,7 @@ with tabs[1]:
             st.markdown(f"### 📂 {fname}")
             st.caption(f"Durée : {dur:.1f}s • Lissage {window}s • Pauses : {pauses}")
 
-        # Liste d’intervalles déjà définis
+# Liste d’intervalles déjà définis
 existing = st.session_state.training_intervals.get(fname, [])
 
 for i, (start_s, end_s) in enumerate(existing):
