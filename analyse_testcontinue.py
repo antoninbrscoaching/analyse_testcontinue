@@ -683,7 +683,13 @@ with tabs[0]:
     st.markdown('</div>', unsafe_allow_html=True)
 # ---------- Onglet 2 : Analyse entraînement ----------
 with tabs[1]:
-    st.header("⚙️ Analyse entraînement (multi-séances + IC local + FC/Allure/Puissance)")
+    st.header("⚙️ Analyse entraînement (multi-séances + IC par intervalle + intervalles multiples)")
+
+    # --- Initialisation session_state ---
+    if "training_intervals" not in st.session_state:
+        st.session_state.training_intervals = {}
+    if "sessions" not in st.session_state:
+        st.session_state.sessions = {}
 
     uploaded_sessions = st.file_uploader(
         "Importer un ou plusieurs fichiers (FIT, GPX, CSV, TCX)",
@@ -693,98 +699,76 @@ with tabs[1]:
     )
 
     if uploaded_sessions:
-        all_summaries = []
-        figs = []
-
         for file in uploaded_sessions:
-            try:
-                df = load_activity(file)
-            except Exception as e:
-                st.error(f"Erreur lors de la lecture de {file.name} : {e}")
-                continue
+            if file.name not in st.session_state.sessions:
+                try:
+                    df = load_activity(file)
+                    df, window, dur, pauses = smooth_hr(df)
+                    st.session_state.sessions[file.name] = (df, window, dur, pauses)
+                    st.session_state.training_intervals[file.name] = []
+                except Exception as e:
+                    st.error(f"Erreur lors du chargement de {file.name} : {e}")
+                    continue
 
-            df, window, dur, pauses = smooth_hr(df)
-            st.markdown(f"### 📂 {file.name}")
+        for fname, (df, window, dur, pauses) in st.session_state.sessions.items():
+            st.markdown(f"### 📂 {fname}")
             st.caption(f"Durée : {dur:.1f}s • Lissage {window}s • Pauses : {pauses}")
 
-            cA, cB = st.columns(2)
-            with cA:
-                s_str = st.text_input(f"Début (hh:mm:ss) – {file.name}", value="0:00:00", key=f"start_{file.name}")
-            with cB:
-                e_str = st.text_input(f"Fin (hh:mm:ss) – {file.name}", value="0:10:00", key=f"end_{file.name}")
+            # Liste d’intervalles déjà définis
+            existing = st.session_state.training_intervals.get(fname, [])
 
-            try:
-                s_sec = parse_time_to_seconds(s_str)
-                e_sec = parse_time_to_seconds(e_str)
-            except:
-                st.warning("⛔ Format temps invalide, ignoré.")
-                continue
+            for i, (start_s, end_s) in enumerate(existing):
+                c1, c2, c3 = st.columns([1, 1, 0.4])
+                with c1:
+                    s_str = st.text_input(f"Début (hh:mm:ss) – intervalle {i+1}", value=f"{int(start_s//60)}:{int(start_s%60):02d}", key=f"{fname}_start_{i}")
+                with c2:
+                    e_str = st.text_input(f"Fin (hh:mm:ss)", value=f"{int(end_s//60)}:{int(end_s%60):02d}", key=f"{fname}_end_{i}")
+                with c3:
+                    if st.button("🗑️", key=f"del_{fname}_{i}"):
+                        st.session_state.training_intervals[fname].pop(i)
+                        st.experimental_rerun()
 
-            if e_sec <= s_sec:
-                st.warning("⛔ Fin ≤ début, segment ignoré.")
-                continue
+                try:
+                    s_sec = parse_time_to_seconds(s_str)
+                    e_sec = parse_time_to_seconds(e_str)
+                    if e_sec > s_sec:
+                        existing[i] = (s_sec, e_sec)
+                except:
+                    st.warning(f"⛔ Format invalide intervalle {i+1}")
 
-            seg = df[(df["time_s"] >= s_sec) & (df["time_s"] <= e_sec)]
-            if seg.empty:
-                st.warning("⚠️ Segment vide.")
-                continue
+            if st.button(f"➕ Ajouter un intervalle ({fname})"):
+                st.session_state.training_intervals[fname].append((0, 300))
+                st.experimental_rerun()
 
-            stats, d_bpm, d_pct = analyze_heart_rate(seg)
-            dist_m = segment_distance_m(seg)
-            t_s = e_sec - s_sec
-            v_kmh = 3.6 * (dist_m / t_s) if t_s > 0 else 0.0
+            # --- Analyse de chaque intervalle ---
+            if existing:
+                for i, (s_sec, e_sec) in enumerate(existing):
+                    seg = df[(df["time_s"] >= s_sec) & (df["time_s"] <= e_sec)]
+                    if seg.empty:
+                        continue
+                    stats, d_bpm, d_pct = analyze_heart_rate(seg)
+                    dist_m = segment_distance_m(seg)
+                    t_s = e_sec - s_sec
+                    v_kmh = 3.6 * (dist_m / t_s) if t_s > 0 else 0.0
 
-            table = pd.DataFrame({
-                "Métrique": [
-                    "FC moyenne (bpm)", "Dérive (bpm/min)", "Dérive (%/min)",
-                    "Durée (s)", "Distance (m)", "Vitesse moy (km/h)"
-                ],
-                "Valeur": [
-                    stats["FC moyenne (bpm)"], stats["Dérive (bpm/min)"],
-                    stats["Dérive (%/min)"], stats["Durée segment (s)"],
-                    round(dist_m, 1), round(v_kmh, 2)
-                ]
-            })
-            st.markdown('<div class="table-box">', unsafe_allow_html=True)
-            st.dataframe(table, use_container_width=True, hide_index=True)
-            st.markdown('</div>', unsafe_allow_html=True)
+                    st.markdown(f"#### Intervalle {i+1} ({s_sec:.0f}s–{e_sec:.0f}s)")
+                    st.dataframe(pd.DataFrame({
+                        "Métrique": ["FC moyenne", "Dérive (bpm/min)", "Dérive (%/min)", "Durée (s)", "Distance (m)", "Vitesse (km/h)"],
+                        "Valeur": [stats['FC moyenne (bpm)'], d_bpm, d_pct, t_s, round(dist_m, 1), round(v_kmh, 2)]
+                    }), hide_index=True, use_container_width=True)
 
-            fig, ax = plt.subplots(figsize=(9, 4.5))
-            plot_multi_signals(
-                ax, seg, t0=s_sec, who=file.name[:3],
-                show_fc=True,
-                show_pace=(get_speed_col(seg) is not None),
-                show_power=("power_smooth" in seg.columns),
-                linewidth=1.8
-            )
-            ax.set_title(f"Cinétique – {file.name}")
-            ax.set_xlabel("Temps segment (s)")
-            ax.grid(True, alpha=0.2)
-            handles, labels = [], []
-            for a in fig.axes:
-                h, l = a.get_legend_handles_labels()
-                handles += h; labels += l
-            if handles:
-                ax.legend(handles, labels, fontsize=8, loc="upper left", frameon=False)
-            st.pyplot(fig)
-
-            all_summaries.append({
-                "Fichier": file.name,
-                "FC moy": stats["FC moyenne (bpm)"],
-                "Dérive bpm/min": d_bpm,
-                "Dérive %/min": d_pct,
-                "Durée (s)": t_s,
-                "Dist (m)": dist_m,
-                "Vit (km/h)": v_kmh
-            })
-            figs.append(fig)
-
-        if all_summaries:
-            df_sum = pd.DataFrame(all_summaries)
-            st.markdown("### 📊 Synthèse des segments importés")
-            st.dataframe(df_sum, use_container_width=True, hide_index=True)
-        else:
-            st.info("Aucun segment valide analysé.")
+                    fig, ax = plt.subplots(figsize=(9, 4.2))
+                    plot_multi_signals(
+                        ax, seg, t0=s_sec, who=fname[:3],
+                        show_fc=True,
+                        show_pace=(get_speed_col(seg) is not None),
+                        show_power=("power_smooth" in seg.columns),
+                        linewidth=1.8
+                    )
+                    ax.set_title(f"Cinétique – {fname} (intervalle {i+1})")
+                    ax.set_xlabel("Temps segment (s)")
+                    ax.grid(True, alpha=0.2)
+                    st.pyplot(fig)
 
 
 # ---------- Onglet 3 : Analyse générale ----------
