@@ -743,6 +743,14 @@ for fname, (df, window, dur, pauses) in st.session_state.sessions.items():
                 existing[i] = (s_sec, e_sec)
         except:
             st.warning(f"⛔ Format invalide intervalle {i+1}")
+          
+# --- Ajout d’un nouvel intervalle ---
+if fname not in st.session_state.training_intervals:
+    st.session_state.training_intervals[fname] = []
+
+if st.button(f"➕ Ajouter un intervalle ({fname})"):
+    st.session_state.training_intervals[fname].append((0, 300))
+    st.rerun()
 
     if st.button(f"➕ Ajouter un intervalle ({fname})"):
         st.session_state.training_intervals[fname].append((0, 300))
