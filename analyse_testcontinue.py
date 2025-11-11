@@ -96,22 +96,28 @@ def load_activity(file):
                     })
         df = pd.DataFrame(data)
 
-    elif name.endswith(".tcx"):
-        # ✅ Lecture TCX
+        elif name.endswith(".tcx"):
         try:
-            tree = ET.parse(file)
-            root = tree.getroot()
-            ns = {"tcx": "http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2"}
+            content = file.read().decode("utf-8", errors="ignore")
+            root = ET.fromstring(content)
+
+            # Gestion de namespace automatique
+            ns = {}
+            for k, v in root.attrib.items():
+                if "xmlns" in k:
+                    ns[k.split("xmlns:")[-1] if ":" in k else "tcx"] = v
+            if not ns:
+                ns = {"tcx": "http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2"}
+
             data = []
-            for tp in root.findall(".//tcx:Trackpoint", ns):
-                time = tp.find("tcx:Time", ns)
-                hr = tp.find("tcx:HeartRateBpm/tcx:Value", ns)
-                dist = tp.find("tcx:DistanceMeters", ns)
-                alt = tp.find("tcx:AltitudeMeters", ns)
-                power = tp.find("tcx:Extensions//tcx:Watts", ns)
-                pos = tp.find("tcx:Position", ns)
-                lat = pos.find("tcx:LatitudeDegrees", ns).text if pos is not None and pos.find("tcx:LatitudeDegrees", ns) is not None else None
-                lon = pos.find("tcx:LongitudeDegrees", ns).text if pos is not None and pos.find("tcx:LongitudeDegrees", ns) is not None else None
+            for tp in root.findall(".//{*}Trackpoint"):
+                time = tp.find(".//{*}Time")
+                hr = tp.find(".//{*}HeartRateBpm/{*}Value")
+                dist = tp.find(".//{*}DistanceMeters")
+                alt = tp.find(".//{*}AltitudeMeters")
+                lat = tp.find(".//{*}Position/{*}LatitudeDegrees")
+                lon = tp.find(".//{*}Position/{*}LongitudeDegrees")
+                power = tp.find(".//{*}Watts")
 
                 data.append({
                     "timestamp": time.text if time is not None else None,
@@ -119,12 +125,16 @@ def load_activity(file):
                     "distance": float(dist.text) if dist is not None else None,
                     "alt": float(alt.text) if alt is not None else None,
                     "power": float(power.text) if power is not None else None,
-                    "lat": float(lat) if lat else None,
-                    "lon": float(lon) if lon else None
+                    "lat": float(lat.text) if lat is not None else None,
+                    "lon": float(lon.text) if lon is not None else None,
                 })
+
             df = pd.DataFrame(data)
+            if df.empty:
+                raise ValueError("Aucune donnée détectée dans le TCX.")
         except Exception as e:
             raise ValueError(f"Erreur lecture TCX : {e}")
+
 
     else:
         raise ValueError("Format non supporté (.fit, .gpx, .csv, .tcx uniquement)")
