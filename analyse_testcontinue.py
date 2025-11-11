@@ -748,19 +748,6 @@ if st.button(f"➕ Ajouter un intervalle ({fname})"):
     st.session_state.training_intervals[fname].append((0, 300))
     st.rerun()
 
-
-                try:
-                    s_sec = parse_time_to_seconds(s_str)
-                    e_sec = parse_time_to_seconds(e_str)
-                    if e_sec > s_sec:
-                        existing[i] = (s_sec, e_sec)
-                except:
-                    st.warning(f"⛔ Format invalide intervalle {i+1}")
-
-            if st.button(f"➕ Ajouter un intervalle ({fname})"):
-                st.session_state.training_intervals[fname].append((0, 300))
-                st.rerun()
-
             # --- Analyse de chaque intervalle ---
             if existing:
                 for i, (s_sec, e_sec) in enumerate(existing):
