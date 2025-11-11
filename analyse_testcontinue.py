@@ -710,73 +710,75 @@ with tabs[1]:
                     st.error(f"Erreur lors du chargement de {file.name} : {e}")
                     continue
 
-        for fname, (df, window, dur, pauses) in st.session_state.sessions.items():
-            st.markdown(f"### 📂 {fname}")
-            st.caption(f"Durée : {dur:.1f}s • Lissage {window}s • Pauses : {pauses}")
+for fname, (df, window, dur, pauses) in st.session_state.sessions.items():
+    st.markdown(f"### 📂 {fname}")
+    st.caption(f"Durée : {dur:.1f}s • Lissage {window}s • Pauses : {pauses}")
 
-# Liste d’intervalles déjà définis
-existing = st.session_state.training_intervals.get(fname, [])
+    # Liste d’intervalles déjà définis
+    existing = st.session_state.training_intervals.get(fname, [])
 
-for i, (start_s, end_s) in enumerate(existing):
-    c1, c2, c3 = st.columns([1, 1, 0.4])
-    with c1:
-        s_str = st.text_input(
-            f"Début (hh:mm:ss) – intervalle {i+1}",
-            value=f"{int(start_s//60)}:{int(start_s%60):02d}",
-            key=f"{fname}_start_{i}"
-        )
-    with c2:
-        e_str = st.text_input(
-            "Fin (hh:mm:ss)",
-            value=f"{int(end_s//60)}:{int(end_s%60):02d}",
-            key=f"{fname}_end_{i}"
-        )
-    with c3:
-        if st.button("🗑️", key=f"del_{fname}_{i}"):
-            st.session_state.training_intervals[fname].pop(i)
-            st.rerun()
+    for i, (start_s, end_s) in enumerate(existing):
+        c1, c2, c3 = st.columns([1, 1, 0.4])
+        with c1:
+            s_str = st.text_input(
+                f"Début (hh:mm:ss) – intervalle {i+1}",
+                value=f"{int(start_s//60)}:{int(start_s%60):02d}",
+                key=f"{fname}_start_{i}"
+            )
+        with c2:
+            e_str = st.text_input(
+                "Fin (hh:mm:ss)",
+                value=f"{int(end_s//60)}:{int(end_s%60):02d}",
+                key=f"{fname}_end_{i}"
+            )
+        with c3:
+            if st.button("🗑️", key=f"del_{fname}_{i}"):
+                st.session_state.training_intervals[fname].pop(i)
+                st.rerun()
 
-    try:
-        s_sec = parse_time_to_seconds(s_str)
-        e_sec = parse_time_to_seconds(e_str)
-        if e_sec > s_sec:
-            existing[i] = (s_sec, e_sec)
-    except:
-        st.warning(f"⛔ Format invalide intervalle {i+1}")
+        try:
+            s_sec = parse_time_to_seconds(s_str)
+            e_sec = parse_time_to_seconds(e_str)
+            if e_sec > s_sec:
+                existing[i] = (s_sec, e_sec)
+        except:
+            st.warning(f"⛔ Format invalide intervalle {i+1}")
 
-if st.button(f"➕ Ajouter un intervalle ({fname})"):
-    st.session_state.training_intervals[fname].append((0, 300))
-    st.rerun()
+    if st.button(f"➕ Ajouter un intervalle ({fname})"):
+        st.session_state.training_intervals[fname].append((0, 300))
+        st.rerun()
 
-            # --- Analyse de chaque intervalle ---
-            if existing:
-                for i, (s_sec, e_sec) in enumerate(existing):
-                    seg = df[(df["time_s"] >= s_sec) & (df["time_s"] <= e_sec)]
-                    if seg.empty:
-                        continue
-                    stats, d_bpm, d_pct = analyze_heart_rate(seg)
-                    dist_m = segment_distance_m(seg)
-                    t_s = e_sec - s_sec
-                    v_kmh = 3.6 * (dist_m / t_s) if t_s > 0 else 0.0
+    # ✅ Analyse et affichage des intervalles
+    if existing:
+        for i, (s_sec, e_sec) in enumerate(existing):
+            seg = df[(df["time_s"] >= s_sec) & (df["time_s"] <= e_sec)]
+            if seg.empty:
+                continue
+            stats, d_bpm, d_pct = analyze_heart_rate(seg)
+            dist_m = segment_distance_m(seg)
+            t_s = e_sec - s_sec
+            v_kmh = 3.6 * (dist_m / t_s) if t_s > 0 else 0.0
 
-                    st.markdown(f"#### Intervalle {i+1} ({s_sec:.0f}s–{e_sec:.0f}s)")
-                    st.dataframe(pd.DataFrame({
-                        "Métrique": ["FC moyenne", "Dérive (bpm/min)", "Dérive (%/min)", "Durée (s)", "Distance (m)", "Vitesse (km/h)"],
-                        "Valeur": [stats['FC moyenne (bpm)'], d_bpm, d_pct, t_s, round(dist_m, 1), round(v_kmh, 2)]
-                    }), hide_index=True, use_container_width=True)
+            st.markdown(f"#### Intervalle {i+1} ({s_sec:.0f}s–{e_sec:.0f}s)")
+            st.dataframe(pd.DataFrame({
+                "Métrique": ["FC moyenne", "Dérive (bpm/min)", "Dérive (%/min)",
+                             "Durée (s)", "Distance (m)", "Vitesse (km/h)"],
+                "Valeur": [stats['FC moyenne (bpm)'], d_bpm, d_pct, t_s,
+                           round(dist_m, 1), round(v_kmh, 2)]
+            }), hide_index=True, use_container_width=True)
 
-                    fig, ax = plt.subplots(figsize=(9, 4.2))
-                    plot_multi_signals(
-                        ax, seg, t0=s_sec, who=fname[:3],
-                        show_fc=True,
-                        show_pace=(get_speed_col(seg) is not None),
-                        show_power=("power_smooth" in seg.columns),
-                        linewidth=1.8
-                    )
-                    ax.set_title(f"Cinétique – {fname} (intervalle {i+1})")
-                    ax.set_xlabel("Temps segment (s)")
-                    ax.grid(True, alpha=0.2)
-                    st.pyplot(fig)
+            fig, ax = plt.subplots(figsize=(9, 4.2))
+            plot_multi_signals(
+                ax, seg, t0=s_sec, who=fname[:3],
+                show_fc=True,
+                show_pace=(get_speed_col(seg) is not None),
+                show_power=("power_smooth" in seg.columns),
+                linewidth=1.8
+            )
+            ax.set_title(f"Cinétique – {fname} (intervalle {i+1})")
+            ax.set_xlabel("Temps segment (s)")
+            ax.grid(True, alpha=0.2)
+            st.pyplot(fig)
 
 
 # ---------- Onglet 3 : Analyse générale ----------
