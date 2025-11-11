@@ -705,7 +705,7 @@ with tabs[1]:
                     df = load_activity(file)
                     df, window, dur, pauses = smooth_hr(df)
                     st.session_state.sessions[file.name] = (df, window, dur, pauses)
-                    st.session_state.training_intervals[file.name] = []
+                    st.sesion_state.training_intervals[file.name] = []
                 except Exception as e:
                     st.error(f"Erreur lors du chargement de {file.name} : {e}")
                     continue
@@ -725,9 +725,9 @@ with tabs[1]:
                     e_str = st.text_input(f"Fin (hh:mm:ss)", value=f"{int(end_s//60)}:{int(end_s%60):02d}", key=f"{fname}_end_{i}")
                 with c3:
                     if st.button("🗑️", key=f"del_{fname}_{i}"):
-                        st.session_state.training_intervals[fname].pop(i)
-                        st.experimental_rerun()
-
+    st.session_state.training_intervals[fname].pop(i)
+    st.experimental_rerun()
+  
                 try:
                     s_sec = parse_time_to_seconds(s_str)
                     e_sec = parse_time_to_seconds(e_str)
@@ -738,7 +738,7 @@ with tabs[1]:
 
             if st.button(f"➕ Ajouter un intervalle ({fname})"):
                 st.session_state.training_intervals[fname].append((0, 300))
-                st.experimental_rerun()
+                st.rerun()
 
             # --- Analyse de chaque intervalle ---
             if existing:
