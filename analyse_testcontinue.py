@@ -543,7 +543,7 @@ st.pyplot(fig1)
 st.markdown('</div>', unsafe_allow_html=True)
 
     # ---- Test 2 ----
-    with ctop[1]:
+        with ctop[1]:
         st.markdown('<div class="report-card">', unsafe_allow_html=True)
         st.subheader("Test 2")
         uploaded_file2 = st.file_uploader("Fichier Test 2 (FIT, GPX, CSV, TCX)", type=ACCEPTED_TYPES, key="file2")
