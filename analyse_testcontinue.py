@@ -428,7 +428,12 @@ def plot_multi_signals(ax, df, t0=0.0, who="T1",
 # =============== APP PRINCIPALE ========================
 st.title("🏃‍♂️ Analyse de Tests d'Endurance + Vitesse Critique (Export PDF)")
 
+# --- Création des onglets ---
 tabs = st.tabs(["🧪 Tests d'endurance", "⚙️ Analyse entraînement", "📊 Analyse générale"])
+
+# 🧭 Détection / suivi de l'onglet actif
+if "active_tab" not in st.session_state:
+    st.session_state.active_tab = "tests"
 
 # ---------- Variables globales ----------
 interval_df1 = interval_df2 = None
@@ -442,8 +447,10 @@ start_sec1 = start_sec2 = 0
 
 # ---------- Onglet 1 : Tests d'endurance ----------
 with tabs[0]:
-    st.header("🧪 Tests d'endurance")
+    # ⚙️ Indique qu’on est dans l’onglet "tests"
+    st.session_state.active_tab = "tests"
 
+    st.header("🧪 Tests d'endurance")
     ctop = st.columns(2)
 
     # ---- Test 1 ----
