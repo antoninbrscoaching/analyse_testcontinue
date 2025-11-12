@@ -775,16 +775,18 @@ with tabs[1]:
                 dist_m = segment_distance_m(seg)
                 t_s = e_sec - s_sec
                 v_kmh = 3.6 * (dist_m / t_s) if t_s > 0 else 0.0
-pace = format_pace_min_per_km(v_kmh)
-pace_str = f"{int(pace[0])}:{int(pace[1]):02d} min/km" if pace else "–"
 
-st.markdown(f"#### Intervalle {i+1} ({s_sec:.0f}s–{e_sec:.0f}s)")
-st.dataframe(pd.DataFrame({
-    "Métrique": ["FC moyenne", "Dérive (bpm/min)", "Dérive (%/min)",
-                 "Durée (s)", "Distance (m)", "Vitesse (km/h)", "Allure (min/km)"],
-    "Valeur": [stats['FC moyenne (bpm)'], d_bpm, d_pct, t_s,
-               round(dist_m, 1), round(v_kmh, 2), pace_str]
-}), hide_index=True, use_container_width=True)
+                # 🕒 Calcul allure moyenne
+                pace = format_pace_min_per_km(v_kmh)
+                pace_str = f"{int(pace[0])}:{int(pace[1]):02d} min/km" if pace else "–"
+
+                st.markdown(f"#### Intervalle {i+1} ({s_sec:.0f}s–{e_sec:.0f}s)")
+                st.dataframe(pd.DataFrame({
+                    "Métrique": ["FC moyenne", "Dérive (bpm/min)", "Dérive (%/min)",
+                                 "Durée (s)", "Distance (m)", "Vitesse (km/h)", "Allure (min/km)"],
+                    "Valeur": [stats['FC moyenne (bpm)'], d_bpm, d_pct, t_s,
+                               round(dist_m, 1), round(v_kmh, 2), pace_str]
+                }), hide_index=True, use_container_width=True)
 
                 fig, ax = plt.subplots(figsize=(9, 4.2))
                 plot_multi_signals(
