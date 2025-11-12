@@ -468,9 +468,9 @@ with tabs[0]:
         show_t1_pace = st.checkbox("☑️ Allure (Test 1)", value=False, key="t1_pace")
         show_t1_power = st.checkbox("☑️ Puissance (Test 1)", value=False, key="t1_power")
 
-        if uploaded_file1:
-            try:
-                df1 = load_activity(uploaded_file1)
+       if uploaded_file1 and st.session_state.active_tab == "tests":
+    try:
+        df1 = load_activity(uploaded_file1)
             except Exception as e:
                 st.error(f"Erreur fichier 1 : {e}")
                 st.markdown('</div>', unsafe_allow_html=True)
@@ -564,9 +564,9 @@ with tabs[0]:
         show_t2_pace = st.checkbox("☑️ Allure (Test 2)", value=False, key="t2_pace")
         show_t2_power = st.checkbox("☑️ Puissance (Test 2)", value=False, key="t2_power")
 
-        if uploaded_file2:
-            try:
-                df2 = load_activity(uploaded_file2)
+if uploaded_file2 and st.session_state.active_tab == "tests":
+    try:
+        df2 = load_activity(uploaded_file2)
             except Exception as e:
                 st.error(f"Erreur fichier 2 : {e}")
                 st.stop()
