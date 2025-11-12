@@ -516,31 +516,31 @@ table1 = pd.DataFrame({
                round(v1_kmh, 2), pace_str1]
 })
 
-                    st.markdown('<div class="table-box">', unsafe_allow_html=True)
-                    st.dataframe(table1, use_container_width=True, hide_index=True)
-                    st.markdown('</div>', unsafe_allow_html=True)
+st.markdown('<div class="table-box">', unsafe_allow_html=True)
+st.dataframe(table1, use_container_width=True, hide_index=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
-                    fig1, ax1 = plt.subplots(figsize=(9, 4.8))
-                    plot_multi_signals(
-                        ax1, interval_df1, t0=start_sec1, who="T1",
-                        show_fc=show_t1_fc,
-                        show_pace=show_t1_pace and (get_speed_col(interval_df1) is not None),
-                        show_power=show_t1_power and ("power_smooth" in interval_df1.columns),
-                        linewidth=1.9
-                    )
-                    ax1.set_xlabel("Temps segment (s)")
-                    ax1.set_title(f"Cinétique – Test 1 ({test1_date})")
-                    ax1.grid(True, alpha=0.15)
+fig1, ax1 = plt.subplots(figsize=(9, 4.8))
+plot_multi_signals(
+    ax1, interval_df1, t0=start_sec1, who="T1",
+    show_fc=show_t1_fc,
+    show_pace=show_t1_pace and (get_speed_col(interval_df1) is not None),
+    show_power=show_t1_power and ("power_smooth" in interval_df1.columns),
+    linewidth=1.9
+)
+ax1.set_xlabel("Temps segment (s)")
+ax1.set_title(f"Cinétique – Test 1 ({test1_date})")
+ax1.grid(True, alpha=0.15)
 
-                    handles, labels = [], []
-                    for a in fig1.axes:
-                        h, l = a.get_legend_handles_labels()
-                        handles += h; labels += l
-                    if handles:
-                        ax1.legend(handles, labels, fontsize=8, loc="upper left", frameon=False)
-                    st.pyplot(fig1)
+handles, labels = [], []
+for a in fig1.axes:
+    h, l = a.get_legend_handles_labels()
+    handles += h; labels += l
+if handles:
+    ax1.legend(handles, labels, fontsize=8, loc="upper left", frameon=False)
+st.pyplot(fig1)
 
-        st.markdown('</div>', unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
     # ---- Test 2 ----
     with ctop[1]:
