@@ -685,11 +685,11 @@ with tabs[0]:
 with tabs[1]:
     st.header("⚙️ Analyse entraînement (multi-séances + IC par intervalle + intervalles multiples)")
 
-    # --- Initialisation session_state ---
-    if "training_intervals" not in st.session_state:
-        st.session_state.training_intervals = {}
-    if "sessions" not in st.session_state:
-        st.session_state.sessions = {}
+    # 🧩 Initialisation
+if "sessions" not in st.session_state:
+    st.session_state.sessions = {}
+if "training_intervals" not in st.session_state:
+    st.session_state.training_intervals = {}
 
     uploaded_sessions = st.file_uploader(
         "Importer un ou plusieurs fichiers (FIT, GPX, CSV, TCX)",
