@@ -639,7 +639,7 @@ if uploaded_file2 and st.session_state.active_tab == "tests":
                         ax2.legend(handles, labels, fontsize=8, loc="upper left", frameon=False)
                     st.pyplot(fig2)
 
-        st.markdown('</div>', unsafe_allow_html=True)
+                    st.markdown('</div>', unsafe_allow_html=True)
 
     # ---- Graphique combiné (T1 vs T2) ----
     st.markdown('<div class="report-card">', unsafe_allow_html=True)
