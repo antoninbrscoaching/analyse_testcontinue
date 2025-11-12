@@ -714,8 +714,12 @@ for fname, (df, window, dur, pauses) in st.session_state.sessions.items():
     st.markdown(f"### 📂 {fname}")
     st.caption(f"Durée : {dur:.1f}s • Lissage {window}s • Pauses : {pauses}")
 
+    # --- Ajout d’un nouvel intervalle ---
+    if fname not in st.session_state.training_intervals:
+        st.session_state.training_intervals[fname] = []
+
     # Liste d’intervalles déjà définis
-    existing = st.session_state.training_intervals.get(fname, [])
+    existing = st.session_state.training_intervals[fname]
 
     for i, (start_s, end_s) in enumerate(existing):
         c1, c2, c3 = st.columns([1, 1, 0.4])
@@ -743,14 +747,6 @@ for fname, (df, window, dur, pauses) in st.session_state.sessions.items():
                 existing[i] = (s_sec, e_sec)
         except:
             st.warning(f"⛔ Format invalide intervalle {i+1}")
-          
-# --- Ajout d’un nouvel intervalle ---
-if fname not in st.session_state.training_intervals:
-    st.session_state.training_intervals[fname] = []
-
-if st.button(f"➕ Ajouter un intervalle ({fname})"):
-    st.session_state.training_intervals[fname].append((0, 300))
-    st.rerun()
 
     if st.button(f"➕ Ajouter un intervalle ({fname})"):
         st.session_state.training_intervals[fname].append((0, 300))
