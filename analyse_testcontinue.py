@@ -465,7 +465,7 @@ with ctop[0]:
     test1_date = st.date_input("📅 Date du test 1", value=date.today(), key="date1")
 
     # ✅ condition propre
-  if uploaded_file1 and st.session_state.active_tab == "tests":
+      if uploaded_file1 and st.session_state.active_tab == "tests":
       try:
         df1 = load_activity(uploaded_file1)
       except Exception as e:
