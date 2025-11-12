@@ -505,11 +505,17 @@ with tabs[0]:
                     dist1_m = segment_distance_m(interval_df1)
                     t1_s = float(end_sec1 - start_sec1)
                     v1_kmh = 3.6 * (dist1_m / t1_s) if t1_s > 0 else 0.0
+pace1 = format_pace_min_per_km(v1_kmh)
+pace_str1 = f"{int(pace1[0])}:{int(pace1[1]):02d} min/km" if pace1 else "–"
 
-                    table1 = pd.DataFrame({
-                        "Métrique": ["FC moyenne (bpm)", "FC max (bpm)", "Dérive (bpm/min)", "Dérive (%/min)", "Durée (s)", "Distance (m)", "Vitesse moy (km/h)"],
-                        "Valeur": [stats1["FC moyenne (bpm)"], stats1["FC max (bpm)"], stats1["Dérive (bpm/min)"], stats1["Dérive (%/min)"], stats1["Durée segment (s)"], round(dist1_m, 1), round(v1_kmh, 2)]
-                    })
+table1 = pd.DataFrame({
+    "Métrique": ["FC moyenne (bpm)", "FC max (bpm)", "Dérive (bpm/min)", "Dérive (%/min)",
+                 "Durée (s)", "Distance (m)", "Vitesse moy (km/h)", "Allure moy (min/km)"],
+    "Valeur": [stats1["FC moyenne (bpm)"], stats1["FC max (bpm)"], stats1["Dérive (bpm/min)"],
+               stats1["Dérive (%/min)"], stats1["Durée segment (s)"], round(dist1_m, 1),
+               round(v1_kmh, 2), pace_str1]
+})
+
                     st.markdown('<div class="table-box">', unsafe_allow_html=True)
                     st.dataframe(table1, use_container_width=True, hide_index=True)
                     st.markdown('</div>', unsafe_allow_html=True)
@@ -589,11 +595,17 @@ with tabs[0]:
                     dist2_m = segment_distance_m(interval_df2)
                     t2_s = float(end_sec2 - start_sec2)
                     v2_kmh = 3.6 * (dist2_m / t2_s) if t2_s > 0 else 0.0
+pace2 = format_pace_min_per_km(v2_kmh)
+pace_str2 = f"{int(pace2[0])}:{int(pace2[1]):02d} min/km" if pace2 else "–"
 
-                    table2 = pd.DataFrame({
-                        "Métrique": ["FC moyenne (bpm)", "FC max (bpm)", "Dérive (bpm/min)", "Dérive (%/min)", "Durée (s)", "Distance (m)", "Vitesse moy (km/h)"],
-                        "Valeur": [stats2["FC moyenne (bpm)"], stats2["FC max (bpm)"], stats2["Dérive (bpm/min)"], stats2["Dérive (%/min)"], stats2["Durée segment (s)"], round(dist2_m, 1), round(v2_kmh, 2)]
-                    })
+table2 = pd.DataFrame({
+    "Métrique": ["FC moyenne (bpm)", "FC max (bpm)", "Dérive (bpm/min)", "Dérive (%/min)",
+                 "Durée (s)", "Distance (m)", "Vitesse moy (km/h)", "Allure moy (min/km)"],
+    "Valeur": [stats2["FC moyenne (bpm)"], stats2["FC max (bpm)"], stats2["Dérive (bpm/min)"],
+               stats2["Dérive (%/min)"], stats2["Durée segment (s)"], round(dist2_m, 1),
+               round(v2_kmh, 2), pace_str2]
+})
+
                     st.markdown('<div class="table-box">', unsafe_allow_html=True)
                     st.dataframe(table2, use_container_width=True, hide_index=True)
                     st.markdown('</div>', unsafe_allow_html=True)
@@ -742,14 +754,16 @@ with tabs[1]:
                 dist_m = segment_distance_m(seg)
                 t_s = e_sec - s_sec
                 v_kmh = 3.6 * (dist_m / t_s) if t_s > 0 else 0.0
+pace = format_pace_min_per_km(v_kmh)
+pace_str = f"{int(pace[0])}:{int(pace[1]):02d} min/km" if pace else "–"
 
-                st.markdown(f"#### Intervalle {i+1} ({s_sec:.0f}s–{e_sec:.0f}s)")
-                st.dataframe(pd.DataFrame({
-                    "Métrique": ["FC moyenne", "Dérive (bpm/min)", "Dérive (%/min)",
-                                 "Durée (s)", "Distance (m)", "Vitesse (km/h)"],
-                    "Valeur": [stats['FC moyenne (bpm)'], d_bpm, d_pct, t_s,
-                               round(dist_m, 1), round(v_kmh, 2)]
-                }), hide_index=True, use_container_width=True)
+st.markdown(f"#### Intervalle {i+1} ({s_sec:.0f}s–{e_sec:.0f}s)")
+st.dataframe(pd.DataFrame({
+    "Métrique": ["FC moyenne", "Dérive (bpm/min)", "Dérive (%/min)",
+                 "Durée (s)", "Distance (m)", "Vitesse (km/h)", "Allure (min/km)"],
+    "Valeur": [stats['FC moyenne (bpm)'], d_bpm, d_pct, t_s,
+               round(dist_m, 1), round(v_kmh, 2), pace_str]
+}), hide_index=True, use_container_width=True)
 
                 fig, ax = plt.subplots(figsize=(9, 4.2))
                 plot_multi_signals(
