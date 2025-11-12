@@ -690,7 +690,8 @@ with tabs[0]:
     st.markdown('</div>', unsafe_allow_html=True)
 # ---------- Onglet 2 : Analyse entraînement ----------
 with tabs[1]:
-    st.header("⚙️ Analyse entraînement (multi-séances + IC par intervalle + intervalles multiples)")
+    st.session_state.active_tab = "training"
+    st.header("⚙️ Analyse entraînement (multi-séances + IC local + FC/Allure/Puissance)")
 
     # 🧩 Initialisation
 if "sessions" not in st.session_state:
