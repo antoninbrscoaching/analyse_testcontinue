@@ -469,6 +469,7 @@ with ctop[0]:
         try:
             df1 = load_activity(uploaded_file1)
             except Exception as e:
+              
                 st.error(f"Erreur fichier 1 : {e}")
                 st.markdown('</div>', unsafe_allow_html=True)
                 st.stop()
