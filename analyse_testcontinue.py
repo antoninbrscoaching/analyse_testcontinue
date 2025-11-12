@@ -454,23 +454,20 @@ with tabs[0]:
     ctop = st.columns(2)
 
     # ---- Test 1 ----
-    with ctop[0]:
-        st.markdown('<div class="report-card">', unsafe_allow_html=True)
-        st.subheader("Test 1")
-        uploaded_file1 = st.file_uploader(
-            "Fichier Test 1 (FIT, GPX, CSV, TCX)",
-            type=ACCEPTED_TYPES,
-            key="file1"
-        )
-        test1_date = st.date_input("📅 Date du test 1", value=date.today(), key="date1")
+  with ctop[0]:
+    st.markdown('<div class="report-card">', unsafe_allow_html=True)
+    st.subheader("Test 1")
+    uploaded_file1 = st.file_uploader(
+        "Fichier Test 1 (FIT, GPX, CSV, TCX)",
+        type=ACCEPTED_TYPES,
+        key="file1"
+    )
+    test1_date = st.date_input("📅 Date du test 1", value=date.today(), key="date1")
 
-        show_t1_fc = st.checkbox("☑️ FC (Test 1)", value=True, key="t1_fc")
-        show_t1_pace = st.checkbox("☑️ Allure (Test 1)", value=False, key="t1_pace")
-        show_t1_power = st.checkbox("☑️ Puissance (Test 1)", value=False, key="t1_power")
-
-       if uploaded_file1 and st.session_state.active_tab == "tests":
-    try:
-        df1 = load_activity(uploaded_file1)
+    # ✅ condition propre
+    if uploaded_file1 and st.session_state.active_tab == "tests":
+        try:
+            df1 = load_activity(uploaded_file1)
             except Exception as e:
                 st.error(f"Erreur fichier 1 : {e}")
                 st.markdown('</div>', unsafe_allow_html=True)
