@@ -564,9 +564,9 @@ with ctop[0]:
 if uploaded_file2 and st.session_state.active_tab == "tests":
     try:
         df2 = load_activity(uploaded_file2)
-            except Exception as e:
-                st.error(f"Erreur fichier 2 : {e}")
-                st.stop()
+    except Exception as e:
+        st.error(f"Erreur fichier 2 : {e}")
+        st.stop()
 
             df2["timestamp"] = pd.to_datetime(df2["timestamp"], errors="coerce")
             df2 = df2.dropna(subset=["timestamp"])
