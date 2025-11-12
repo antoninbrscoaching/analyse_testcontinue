@@ -568,10 +568,10 @@ if uploaded_file2 and st.session_state.active_tab == "tests":
         st.error(f"Erreur fichier 2 : {e}")
         st.stop()
 
-            df2["timestamp"] = pd.to_datetime(df2["timestamp"], errors="coerce")
-            df2 = df2.dropna(subset=["timestamp"])
-            lag2 = st.slider("Correction du décalage capteur (s)", 0, 10, 0, key="lag2")
-            df2["timestamp"] = df2["timestamp"] - pd.to_timedelta(lag2, unit="s")
+    df2["timestamp"] = pd.to_datetime(df2["timestamp"], errors="coerce")
+    df2 = df2.dropna(subset=["timestamp"])
+    lag2 = st.slider("Correction du décalage capteur (s)", 0, 10, 0, key="lag2")
+    df2["timestamp"] = df2["timestamp"] - pd.to_timedelta(lag2, unit="s")
 
             df2, window_sec2, total_dur2, pauses2 = smooth_hr(df2)
             st.caption(f"Durée détectée : {total_dur2:.1f}s • Lissage : {window_sec2}s • Pauses : {pauses2}")
