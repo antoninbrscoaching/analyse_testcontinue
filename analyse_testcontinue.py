@@ -465,14 +465,15 @@ with ctop[0]:
     test1_date = st.date_input("📅 Date du test 1", value=date.today(), key="date1")
 
     # ✅ condition propre
-    if uploaded_file1 and st.session_state.active_tab == "tests":
-        try:
-            df1 = load_activity(uploaded_file1)
-            except Exception as e:
-              
-                st.error(f"Erreur fichier 1 : {e}")
-                st.markdown('</div>', unsafe_allow_html=True)
-                st.stop()
+  if uploaded_file1 and st.session_state.active_tab == "tests":
+      try:
+        df1 = load_activity(uploaded_file1)
+      except Exception as e:
+          
+            st.error(f"Erreur fichier 1 : {e}")
+            st.markdown('</div>', unsafe_allow_html=True)
+            st.stop()
+
 
             df1["timestamp"] = pd.to_datetime(df1["timestamp"], errors="coerce")
             df1 = df1.dropna(subset=["timestamp"])
