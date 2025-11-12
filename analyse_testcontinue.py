@@ -454,7 +454,7 @@ with tabs[0]:
     ctop = st.columns(2)
 
     # ---- Test 1 ----
-  with ctop[0]:
+with ctop[0]:
     st.markdown('<div class="report-card">', unsafe_allow_html=True)
     st.subheader("Test 1")
     uploaded_file1 = st.file_uploader(
