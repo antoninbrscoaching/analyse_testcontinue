@@ -576,22 +576,22 @@ if uploaded_file2 and st.session_state.active_tab == "tests":
     df2, window_sec2, total_dur2, pauses2 = smooth_hr(df2)
     st.caption(f"Durée détectée : {total_dur2:.1f}s • Lissage : {window_sec2}s • Pauses : {pauses2}")
 
-            c21, c22 = st.columns(2)
-            with c21:
-                start_str2 = st.text_input("Début (hh:mm:ss)", value="0:00:00", key="start2")
-            with c22:
-                end_str2 = st.text_input("Fin (hh:mm:ss)", value="0:12:00", key="end2")
+    c21, c22 = st.columns(2)
+    with c21:
+          start_str2 = st.text_input("Début (hh:mm:ss)", value="0:00:00", key="start2")
+    with c22:
+          end_str2 = st.text_input("Fin (hh:mm:ss)", value="0:12:00", key="end2")
 
-            try:
-                start_sec2 = parse_time_to_seconds(start_str2)
-                end_sec2 = parse_time_to_seconds(end_str2)
-            except:
-                st.error("Format temps invalide (hh:mm:ss).")
-                st.stop()
+    try:
+          start_sec2 = parse_time_to_seconds(start_str2)
+          end_sec2 = parse_time_to_seconds(end_str2)
+    except:
+          st.error("Format temps invalide (hh:mm:ss).")
+          st.stop()
 
-            if end_sec2 <= start_sec2:
-                st.error("La fin doit être supérieure au début.")
-            else:
+    if end_sec2 <= start_sec2:
+          st.error("La fin doit être supérieure au début.")
+    else:
                 if end_sec2 > df2["time_s"].max():
                     st.warning("⚠️ Fin > données disponibles – limitation automatique (Test 2).")
                     end_sec2 = df2["time_s"].max()
