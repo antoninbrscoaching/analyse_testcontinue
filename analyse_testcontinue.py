@@ -591,44 +591,45 @@ st.markdown('</div>', unsafe_allow_html=True)
                 interval_df2 = df2[(df2["time_s"] >= start_sec2) & (df2["time_s"] <= end_sec2)]
 
                 if len(interval_df2) > 10:
-                    stats2, drift2_bpm, drift2_pct = analyze_heart_rate(interval_df2)
-                    dist2_m = segment_distance_m(interval_df2)
-                    t2_s = float(end_sec2 - start_sec2)
-                    v2_kmh = 3.6 * (dist2_m / t2_s) if t2_s > 0 else 0.0
-pace2 = format_pace_min_per_km(v2_kmh)
-pace_str2 = f"{int(pace2[0])}:{int(pace2[1]):02d} min/km" if pace2 else "–"
+    stats2, drift2_bpm, drift2_pct = analyze_heart_rate(interval_df2)
+    dist2_m = segment_distance_m(interval_df2)
+    t2_s = float(end_sec2 - start_sec2)
+    v2_kmh = 3.6 * (dist2_m / t2_s) if t2_s > 0 else 0.0
 
-table2 = pd.DataFrame({
-    "Métrique": ["FC moyenne (bpm)", "FC max (bpm)", "Dérive (bpm/min)", "Dérive (%/min)",
-                 "Durée (s)", "Distance (m)", "Vitesse moy (km/h)", "Allure moy (min/km)"],
-    "Valeur": [stats2["FC moyenne (bpm)"], stats2["FC max (bpm)"], stats2["Dérive (bpm/min)"],
-               stats2["Dérive (%/min)"], stats2["Durée segment (s)"], round(dist2_m, 1),
-               round(v2_kmh, 2), pace_str2]
-})
+    pace2 = format_pace_min_per_km(v2_kmh)
+    pace_str2 = f"{int(pace2[0])}:{int(pace2[1]):02d} min/km" if pace2 else "–"
 
-                    st.markdown('<div class="table-box">', unsafe_allow_html=True)
-                    st.dataframe(table2, use_container_width=True, hide_index=True)
-                    st.markdown('</div>', unsafe_allow_html=True)
+    table2 = pd.DataFrame({
+        "Métrique": ["FC moyenne (bpm)", "FC max (bpm)", "Dérive (bpm/min)", "Dérive (%/min)",
+                     "Durée (s)", "Distance (m)", "Vitesse moy (km/h)", "Allure moy (min/km)"],
+        "Valeur": [stats2["FC moyenne (bpm)"], stats2["FC max (bpm)"], stats2["Dérive (bpm/min)"],
+                   stats2["Dérive (%/min)"], stats2["Durée segment (s)"], round(dist2_m, 1),
+                   round(v2_kmh, 2), pace_str2]
+    })
 
-                    fig2, ax2 = plt.subplots(figsize=(9, 4.8))
-                    plot_multi_signals(
-                        ax2, interval_df2, t0=start_sec2, who="T2",
-                        show_fc=show_t2_fc,
-                        show_pace=show_t2_pace and (get_speed_col(interval_df2) is not None),
-                        show_power=show_t2_power and ("power_smooth" in interval_df2.columns),
-                        linewidth=1.9
-                    )
-                    ax2.set_xlabel("Temps segment (s)")
-                    ax2.set_title(f"Cinétique – Test 2 ({test2_date})")
-                    ax2.grid(True, alpha=0.15)
+    st.markdown('<div class="table-box">', unsafe_allow_html=True)
+    st.dataframe(table2, use_container_width=True, hide_index=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
-                    handles, labels = [], []
-                    for a in fig2.axes:
-                        h, l = a.get_legend_handles_labels()
-                        handles += h; labels += l
-                    if handles:
-                        ax2.legend(handles, labels, fontsize=8, loc="upper left", frameon=False)
-                    st.pyplot(fig2)
+    fig2, ax2 = plt.subplots(figsize=(9, 4.8))
+    plot_multi_signals(
+        ax2, interval_df2, t0=start_sec2, who="T2",
+        show_fc=show_t2_fc,
+        show_pace=show_t2_pace and (get_speed_col(interval_df2) is not None),
+        show_power=show_t2_power and ("power_smooth" in interval_df2.columns),
+        linewidth=1.9
+    )
+    ax2.set_xlabel("Temps segment (s)")
+    ax2.set_title(f"Cinétique – Test 2 ({test2_date})")
+    ax2.grid(True, alpha=0.15)
+
+    handles, labels = [], []
+    for a in fig2.axes:
+        h, l = a.get_legend_handles_labels()
+        handles += h; labels += l
+    if handles:
+        ax2.legend(handles, labels, fontsize=8, loc="upper left", frameon=False)
+    st.pyplot(fig2)
 
         st.markdown('</div>', unsafe_allow_html=True)
 
