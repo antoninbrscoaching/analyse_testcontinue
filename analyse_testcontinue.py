@@ -447,31 +447,28 @@ start_sec1 = start_sec2 = 0
 
 # ---------- Onglet 1 : Tests d'endurance ----------
 with tabs[0]:
-    # ⚙️ Indique qu’on est dans l’onglet "tests"
     st.session_state.active_tab = "tests"
-
     st.header("🧪 Tests d'endurance")
+
     ctop = st.columns(2)
 
     # ---- Test 1 ----
-with ctop[0]:
-    st.markdown('<div class="report-card">', unsafe_allow_html=True)
-    st.subheader("Test 1")
-    uploaded_file1 = st.file_uploader(
-        "Fichier Test 1 (FIT, GPX, CSV, TCX)",
-        type=ACCEPTED_TYPES,
-        key="file1"
-    )
-    test1_date = st.date_input("📅 Date du test 1", value=date.today(), key="date1")
+    with ctop[0]:
+        st.markdown('<div class="report-card">', unsafe_allow_html=True)
+        st.subheader("Test 1")
+        uploaded_file1 = st.file_uploader("Fichier Test 1 (FIT, GPX, CSV, TCX)", type=ACCEPTED_TYPES, key="file1")
+        test1_date = st.date_input("📅 Date du test 1", value=date.today(), key="date1")
 
-    # ✅ condition propre
-    if uploaded_file1 and st.session_state.active_tab == "tests":
-        try:
-            df1 = load_activity(uploaded_file1)
-        except Exception as e:
-            st.error(f"Erreur fichier 1 : {e}")
-            st.markdown('</div>', unsafe_allow_html=True)
-            st.stop()
+        show_t1_fc = st.checkbox("☑️ FC (Test 1)", value=True, key="t1_fc")
+        show_t1_pace = st.checkbox("☑️ Allure (Test 1)", value=False, key="t1_pace")
+        show_t1_power = st.checkbox("☑️ Puissance (Test 1)", value=False, key="t1_power")
+
+        if uploaded_file1:
+            try:
+                df1 = load_activity(uploaded_file1)
+            except Exception as e:
+                st.error(f"Erreur fichier 1 : {e}")
+                st.stop()
 
             df1["timestamp"] = pd.to_datetime(df1["timestamp"], errors="coerce")
             df1 = df1.dropna(subset=["timestamp"])
@@ -502,6 +499,7 @@ with ctop[0]:
                     end_sec1 = df1["time_s"].max()
 
                 interval_df1 = df1[(df1["time_s"] >= start_sec1) & (df1["time_s"] <= end_sec1)]
+
                 if len(interval_df1) > 10:
                     stats1, drift1_bpm, drift1_pct = analyze_heart_rate(interval_df1)
                     dist1_m = segment_distance_m(interval_df1)
@@ -509,16 +507,8 @@ with ctop[0]:
                     v1_kmh = 3.6 * (dist1_m / t1_s) if t1_s > 0 else 0.0
 
                     table1 = pd.DataFrame({
-                        "Métrique": [
-                            "FC moyenne (bpm)", "FC max (bpm)",
-                            "Dérive (bpm/min)", "Dérive (%/min)",
-                            "Durée (s)", "Distance (m)", "Vitesse moy (km/h)"
-                        ],
-                        "Valeur": [
-                            stats1["FC moyenne (bpm)"], stats1["FC max (bpm)"],
-                            stats1["Dérive (bpm/min)"], stats1["Dérive (%/min)"],
-                            stats1["Durée segment (s)"], round(dist1_m, 1), round(v1_kmh, 2)
-                        ]
+                        "Métrique": ["FC moyenne (bpm)", "FC max (bpm)", "Dérive (bpm/min)", "Dérive (%/min)", "Durée (s)", "Distance (m)", "Vitesse moy (km/h)"],
+                        "Valeur": [stats1["FC moyenne (bpm)"], stats1["FC max (bpm)"], stats1["Dérive (bpm/min)"], stats1["Dérive (%/min)"], stats1["Durée segment (s)"], round(dist1_m, 1), round(v1_kmh, 2)]
                     })
                     st.markdown('<div class="table-box">', unsafe_allow_html=True)
                     st.dataframe(table1, use_container_width=True, hide_index=True)
@@ -550,53 +540,50 @@ with ctop[0]:
     with ctop[1]:
         st.markdown('<div class="report-card">', unsafe_allow_html=True)
         st.subheader("Test 2")
-        uploaded_file2 = st.file_uploader(
-            "Fichier Test 2 (FIT, GPX, CSV, TCX)",
-            type=ACCEPTED_TYPES,
-            key="file2"
-        )
+        uploaded_file2 = st.file_uploader("Fichier Test 2 (FIT, GPX, CSV, TCX)", type=ACCEPTED_TYPES, key="file2")
         test2_date = st.date_input("📅 Date du test 2", value=date.today(), key="date2")
 
         show_t2_fc = st.checkbox("☑️ FC (Test 2)", value=True, key="t2_fc")
         show_t2_pace = st.checkbox("☑️ Allure (Test 2)", value=False, key="t2_pace")
         show_t2_power = st.checkbox("☑️ Puissance (Test 2)", value=False, key="t2_power")
 
-if uploaded_file2 and st.session_state.active_tab == "tests":
-    try:
-        df2 = load_activity(uploaded_file2)
-    except Exception as e:
-        st.error(f"Erreur fichier 2 : {e}")
-        st.stop()
+        if uploaded_file2:
+            try:
+                df2 = load_activity(uploaded_file2)
+            except Exception as e:
+                st.error(f"Erreur fichier 2 : {e}")
+                st.stop()
 
-    df2["timestamp"] = pd.to_datetime(df2["timestamp"], errors="coerce")
-    df2 = df2.dropna(subset=["timestamp"])
-    lag2 = st.slider("Correction du décalage capteur (s)", 0, 10, 0, key="lag2")
-    df2["timestamp"] = df2["timestamp"] - pd.to_timedelta(lag2, unit="s")
+            df2["timestamp"] = pd.to_datetime(df2["timestamp"], errors="coerce")
+            df2 = df2.dropna(subset=["timestamp"])
+            lag2 = st.slider("Correction du décalage capteur (s)", 0, 10, 0, key="lag2")
+            df2["timestamp"] = df2["timestamp"] - pd.to_timedelta(lag2, unit="s")
 
-    df2, window_sec2, total_dur2, pauses2 = smooth_hr(df2)
-    st.caption(f"Durée détectée : {total_dur2:.1f}s • Lissage : {window_sec2}s • Pauses : {pauses2}")
+            df2, window_sec2, total_dur2, pauses2 = smooth_hr(df2)
+            st.caption(f"Durée détectée : {total_dur2:.1f}s • Lissage : {window_sec2}s • Pauses : {pauses2}")
 
-    c21, c22 = st.columns(2)
-    with c21:
-          start_str2 = st.text_input("Début (hh:mm:ss)", value="0:00:00", key="start2")
-    with c22:
-          end_str2 = st.text_input("Fin (hh:mm:ss)", value="0:12:00", key="end2")
+            c21, c22 = st.columns(2)
+            with c21:
+                start_str2 = st.text_input("Début (hh:mm:ss)", value="0:00:00", key="start2")
+            with c22:
+                end_str2 = st.text_input("Fin (hh:mm:ss)", value="0:12:00", key="end2")
 
-    try:
-          start_sec2 = parse_time_to_seconds(start_str2)
-          end_sec2 = parse_time_to_seconds(end_str2)
-    except:
-          st.error("Format temps invalide (hh:mm:ss).")
-          st.stop()
+            try:
+                start_sec2 = parse_time_to_seconds(start_str2)
+                end_sec2 = parse_time_to_seconds(end_str2)
+            except:
+                st.error("Format temps invalide (hh:mm:ss).")
+                st.stop()
 
-    if end_sec2 <= start_sec2:
-          st.error("La fin doit être supérieure au début.")
-    else:
+            if end_sec2 <= start_sec2:
+                st.error("La fin doit être supérieure au début.")
+            else:
                 if end_sec2 > df2["time_s"].max():
                     st.warning("⚠️ Fin > données disponibles – limitation automatique (Test 2).")
                     end_sec2 = df2["time_s"].max()
 
                 interval_df2 = df2[(df2["time_s"] >= start_sec2) & (df2["time_s"] <= end_sec2)]
+
                 if len(interval_df2) > 10:
                     stats2, drift2_bpm, drift2_pct = analyze_heart_rate(interval_df2)
                     dist2_m = segment_distance_m(interval_df2)
@@ -604,16 +591,8 @@ if uploaded_file2 and st.session_state.active_tab == "tests":
                     v2_kmh = 3.6 * (dist2_m / t2_s) if t2_s > 0 else 0.0
 
                     table2 = pd.DataFrame({
-                        "Métrique": [
-                            "FC moyenne (bpm)", "FC max (bpm)",
-                            "Dérive (bpm/min)", "Dérive (%/min)",
-                            "Durée (s)", "Distance (m)", "Vitesse moy (km/h)"
-                        ],
-                        "Valeur": [
-                            stats2["FC moyenne (bpm)"], stats2["FC max (bpm)"],
-                            stats2["Dérive (bpm/min)"], stats2["Dérive (%/min)"],
-                            stats2["Durée segment (s)"], round(dist2_m, 1), round(v2_kmh, 2)
-                        ]
+                        "Métrique": ["FC moyenne (bpm)", "FC max (bpm)", "Dérive (bpm/min)", "Dérive (%/min)", "Durée (s)", "Distance (m)", "Vitesse moy (km/h)"],
+                        "Valeur": [stats2["FC moyenne (bpm)"], stats2["FC max (bpm)"], stats2["Dérive (bpm/min)"], stats2["Dérive (%/min)"], stats2["Durée segment (s)"], round(dist2_m, 1), round(v2_kmh, 2)]
                     })
                     st.markdown('<div class="table-box">', unsafe_allow_html=True)
                     st.dataframe(table2, use_container_width=True, hide_index=True)
@@ -639,12 +618,11 @@ if uploaded_file2 and st.session_state.active_tab == "tests":
                         ax2.legend(handles, labels, fontsize=8, loc="upper left", frameon=False)
                     st.pyplot(fig2)
 
-                    st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    # ---- Graphique combiné (T1 vs T2) ----
+    # ---- Graphique combiné ----
     st.markdown('<div class="report-card">', unsafe_allow_html=True)
     st.subheader("Graphique combiné — sélectionne les séries à afficher")
-
     show_c_fc_t1 = st.checkbox("☑️ FC Test 1", True)
     show_c_pace_t1 = st.checkbox("☑️ Allure Test 1", False)
     show_c_pow_t1 = st.checkbox("☑️ Puissance Test 1", False)
@@ -655,21 +633,15 @@ if uploaded_file2 and st.session_state.active_tab == "tests":
     if (interval_df1 is not None) or (interval_df2 is not None):
         figC, axC = plt.subplots(figsize=(9.5, 5.2))
         if interval_df1 is not None:
-            plot_multi_signals(
-                axC, interval_df1, t0=interval_df1["time_s"].iloc[0], who="T1",
-                show_fc=show_c_fc_t1,
-                show_pace=show_c_pace_t1 and (get_speed_col(interval_df1) is not None),
-                show_power=show_c_pow_t1 and ("power_smooth" in interval_df1.columns),
-                linewidth=1.9
-            )
+            plot_multi_signals(axC, interval_df1, t0=interval_df1["time_s"].iloc[0], who="T1",
+                               show_fc=show_c_fc_t1,
+                               show_pace=show_c_pace_t1 and (get_speed_col(interval_df1) is not None),
+                               show_power=show_c_pow_t1 and ("power_smooth" in interval_df1.columns))
         if interval_df2 is not None:
-            plot_multi_signals(
-                axC, interval_df2, t0=interval_df2["time_s"].iloc[0], who="T2",
-                show_fc=show_c_fc_t2,
-                show_pace=show_c_pace_t2 and (get_speed_col(interval_df2) is not None),
-                show_power=show_c_pow_t2 and ("power_smooth" in interval_df2.columns),
-                linewidth=1.9
-            )
+            plot_multi_signals(axC, interval_df2, t0=interval_df2["time_s"].iloc[0], who="T2",
+                               show_fc=show_c_fc_t2,
+                               show_pace=show_c_pace_t2 and (get_speed_col(interval_df2) is not None),
+                               show_power=show_c_pow_t2 and ("power_smooth" in interval_df2.columns))
         axC.set_xlabel("Temps segment (s)")
         axC.set_title("Comparaison des cinétiques (FC + Allure + Puissance)")
         axC.grid(True, alpha=0.15)
@@ -680,7 +652,6 @@ if uploaded_file2 and st.session_state.active_tab == "tests":
             handles += h; labels += l
         if handles:
             axC.legend(handles, labels, fontsize=8, loc="upper left", frameon=False)
-
         st.pyplot(figC)
     else:
         st.info("Importe au moins un test et coche les options d’affichage.")
