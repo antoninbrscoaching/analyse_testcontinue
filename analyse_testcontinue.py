@@ -822,6 +822,64 @@ with tabs[1]:
                 ax.set_xlabel("Temps segment (s)")
                 ax.grid(True, alpha=0.2)
                 st.pyplot(fig)
+              
+# ---- Graphique combiné (séances complètes) ----
+st.markdown('<div class="report-card">', unsafe_allow_html=True)
+st.subheader("📊 Graphique combiné — toutes les séances (FC / Allure / Puissance)")
+
+# Cases à cocher pour les courbes globales
+show_g_fc = st.checkbox("☑️ FC", True, key="glob_fc")
+show_g_pace = st.checkbox("☑️ Allure", False, key="glob_pace")
+show_g_power = st.checkbox("☑️ Puissance", False, key="glob_power")
+
+if len(st.session_state.sessions) > 0:
+    figG, axG = plt.subplots(figsize=(10, 5))
+
+    legend_handles = []
+    legend_labels = []
+
+    # ➜ Pour chaque fichier importé : tracer la séance entière
+    for fname, (df_full, window, dur, pauses) in st.session_state.sessions.items():
+
+        t0 = df_full["time_s"].iloc[0]
+        tt = df_full["time_s"].values - t0
+
+        # --- FC ---
+        if show_g_fc and "hr_smooth" in df_full.columns:
+            h = axG.plot(tt, df_full["hr_smooth"], linewidth=1.4, label=f"{fname} — FC")[0]
+            legend_handles.append(h)
+            legend_labels.append(f"{fname} — FC")
+
+        # --- Allure ---
+        if show_g_pace and ("speed_smooth" in df_full.columns):
+            pace_series = compute_pace_series(df_full)
+            if pace_series is not None:
+                axP = add_pace_axis(axG)
+                h = axP.plot(tt, pace_series, linewidth=1.4, label=f"{fname} — Allure")[0]
+                legend_handles.append(h)
+                legend_labels.append(f"{fname} — Allure")
+
+        # --- Puissance ---
+        if show_g_power and ("power_smooth" in df_full.columns):
+            axW = add_power_axis(axG, offset=60)
+            h = axW.plot(tt, df_full["power_smooth"], linewidth=1.4, label=f"{fname} — Puissance")[0]
+            legend_handles.append(h)
+            legend_labels.append(f"{fname} — Puissance")
+
+    axG.set_xlabel("Temps total (s)")
+    axG.set_title("Cinétique (séances complètes)")
+    axG.grid(True, alpha=0.2)
+
+    # --- Légende globale ---
+    if legend_handles:
+        axG.legend(legend_handles, legend_labels, fontsize=8, loc="upper left", frameon=False)
+
+    st.pyplot(figG)
+
+else:
+    st.info("Importe au moins une séance pour afficher un graphique combiné.")
+
+st.markdown('</div>', unsafe_allow_html=True)
 
 # ---------- Onglet 3 : Analyse générale ----------
 with tabs[2]:
