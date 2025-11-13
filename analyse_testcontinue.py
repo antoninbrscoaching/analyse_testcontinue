@@ -505,7 +505,8 @@ with tabs[0]:
                     dist1_m = segment_distance_m(interval_df1)
                     t1_s = float(end_sec1 - start_sec1)
                     v1_kmh = 3.6 * (dist1_m / t1_s) if t1_s > 0 else 0.0
-                  
+v1_kmh = None
+v2_kmh = None                  
 # ➕ Calcul d’allure juste après v1_kmh
 pace1 = format_pace_min_per_km(v1_kmh)
 pace_str1 = f"{int(pace1[0])}:{int(pace1[1]):02d} min/km" if pace1 else "–"
@@ -609,7 +610,8 @@ with ctop[1]:
                 dist2_m = segment_distance_m(interval_df2)
                 t2_s = float(end_sec2 - start_sec2)
                 v2_kmh = 3.6 * (dist2_m / t2_s) if t2_s > 0 else 0.0
-
+v1_kmh = None
+v2_kmh = None
 # ➕ Calcul d’allure juste après v2_kmh
 pace2 = format_pace_min_per_km(v2_kmh)
 pace_str2 = f"{int(pace2[0])}:{int(pace2[1]):02d} min/km" if pace2 else "–"
