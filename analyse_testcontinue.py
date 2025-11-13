@@ -717,11 +717,15 @@ with tabs[1]:
     st.session_state.active_tab = "training"
     st.header("⚙️ Analyse entraînement (multi-séances + IC local + FC/Allure/Puissance)")
 
-    # 🧩 Initialisation (⚠️ bien à l'intérieur de l'onglet)
+    # 🧩 Initialisation — interne à l’onglet
     if "sessions" not in st.session_state:
         st.session_state.sessions = {}
     if "training_intervals" not in st.session_state:
         st.session_state.training_intervals = {}
+
+    # 🔥 Empêche toute donnée des TESTS d’apparaître ici
+    interval_df1 = None
+    interval_df2 = None
 
     # --- Import des fichiers d'entraînement ---
     uploaded_sessions = st.file_uploader(
@@ -752,23 +756,26 @@ with tabs[1]:
         if fname not in st.session_state.training_intervals:
             st.session_state.training_intervals[fname] = []
 
-        # Liste d’intervalles déjà définis
         existing = st.session_state.training_intervals[fname]
 
+        # ---- Affichage des intervalles ----
         for i, (start_s, end_s) in enumerate(existing):
             c1, c2, c3 = st.columns([1, 1, 0.4])
+
             with c1:
                 s_str = st.text_input(
                     f"Début (hh:mm:ss) – intervalle {i+1}",
                     value=f"{int(start_s//60)}:{int(start_s%60):02d}",
                     key=f"{fname}_start_{i}"
                 )
+
             with c2:
                 e_str = st.text_input(
                     "Fin (hh:mm:ss)",
                     value=f"{int(end_s//60)}:{int(end_s%60):02d}",
                     key=f"{fname}_end_{i}"
                 )
+
             with c3:
                 if st.button("🗑️", key=f"del_{fname}_{i}"):
                     st.session_state.training_intervals[fname].pop(i)
@@ -782,104 +789,103 @@ with tabs[1]:
             except:
                 st.warning(f"⛔ Format invalide intervalle {i+1}")
 
+        # --- Bouton ajout intervalle ---
         if st.button(f"➕ Ajouter un intervalle ({fname})"):
             st.session_state.training_intervals[fname].append((0, 300))
             st.rerun()
 
-        # ✅ Analyse et affichage des intervalles
-        if existing:
-            for i, (s_sec, e_sec) in enumerate(existing):
-                seg = df[(df["time_s"] >= s_sec) & (df["time_s"] <= e_sec)]
-                if seg.empty:
-                    continue
+        # ---------- Analyse des intervalles ----------
+        for i, (s_sec, e_sec) in enumerate(existing):
 
-                stats, d_bpm, d_pct = analyze_heart_rate(seg)
-                dist_m = segment_distance_m(seg)
-                t_s = e_sec - s_sec
-                v_kmh = 3.6 * (dist_m / t_s) if t_s > 0 else 0.0
+            seg = df[(df["time_s"] >= s_sec) & (df["time_s"] <= e_sec)]
+            if seg.empty:
+                continue
 
-                # 🕒 Calcul allure moyenne
-                pace = format_pace_min_per_km(v_kmh)
-                pace_str = f"{int(pace[0])}:{int(pace[1]):02d} min/km" if pace else "–"
+            stats, d_bpm, d_pct = analyze_heart_rate(seg)
+            dist_m = segment_distance_m(seg)
+            t_s = e_sec - s_sec
+            v_kmh = 3.6 * (dist_m / t_s) if t_s > 0 else 0.0
 
-                st.markdown(f"#### Intervalle {i+1} ({s_sec:.0f}s–{e_sec:.0f}s)")
-                st.dataframe(pd.DataFrame({
-                    "Métrique": ["FC moyenne", "Dérive (bpm/min)", "Dérive (%/min)",
-                                 "Durée (s)", "Distance (m)", "Vitesse (km/h)", "Allure (min/km)"],
-                    "Valeur": [stats['FC moyenne (bpm)'], d_bpm, d_pct, t_s,
-                               round(dist_m, 1), round(v_kmh, 2), pace_str]
-                }), hide_index=True, use_container_width=True)
+            pace = format_pace_min_per_km(v_kmh)
+            pace_str = f"{int(pace[0])}:{int(pace[1]):02d} min/km" if pace else "–"
 
-                fig, ax = plt.subplots(figsize=(9, 4.2))
-                plot_multi_signals(
-                    ax, seg, t0=s_sec, who=fname[:3],
-                    show_fc=True,
-                    show_pace=(get_speed_col(seg) is not None),
-                    show_power=("power_smooth" in seg.columns),
-                    linewidth=1.8
-                )
-                ax.set_title(f"Cinétique – {fname} (intervalle {i+1})")
-                ax.set_xlabel("Temps segment (s)")
-                ax.grid(True, alpha=0.2)
-                st.pyplot(fig)
-              
-# ---- Graphique combiné (séances complètes) ----
-st.markdown('<div class="report-card">', unsafe_allow_html=True)
-st.subheader("📊 Graphique combiné — toutes les séances (FC / Allure / Puissance)")
+            st.markdown(f"#### Intervalle {i+1} ({s_sec:.0f}s–{e_sec:.0f}s)")
+            st.dataframe(pd.DataFrame({
+                "Métrique": ["FC moyenne", "Dérive (bpm/min)", "Dérive (%/min)",
+                             "Durée (s)", "Distance (m)", "Vitesse (km/h)", "Allure (min/km)"],
+                "Valeur": [stats['FC moyenne (bpm)'], d_bpm, d_pct, t_s,
+                           round(dist_m, 1), round(v_kmh, 2), pace_str]
+            }), hide_index=True, use_container_width=True)
 
-# Cases à cocher pour les courbes globales
-show_g_fc = st.checkbox("☑️ FC", True, key="glob_fc")
-show_g_pace = st.checkbox("☑️ Allure", False, key="glob_pace")
-show_g_power = st.checkbox("☑️ Puissance", False, key="glob_power")
+            fig, ax = plt.subplots(figsize=(9, 4.2))
+            plot_multi_signals(
+                ax, seg, t0=s_sec, who=fname[:3],
+                show_fc=True,
+                show_pace=(get_speed_col(seg) is not None),
+                show_power=("power_smooth" in seg.columns),
+                linewidth=1.8
+            )
+            ax.set_title(f"Cinétique – {fname} (intervalle {i+1})")
+            ax.set_xlabel("Temps segment (s)")
+            ax.grid(True, alpha=0.2)
+            st.pyplot(fig)
 
-if len(st.session_state.sessions) > 0:
-    figG, axG = plt.subplots(figsize=(10, 5))
+    # -------------------------------------------------------------------
+    # 🔥🔥🔥 GRAPHQIUE COMBINÉ (TOTAL SÉANCE) — VERSION CORRIGÉE 🔥🔥🔥
+    # -------------------------------------------------------------------
+    st.markdown('<div class="report-card">', unsafe_allow_html=True)
+    st.subheader("📊 Graphique combiné — séances complètes (FC / Allure / Puissance)")
 
-    legend_handles = []
-    legend_labels = []
+    show_g_fc = st.checkbox("☑️ FC", True, key="glob_fc")
+    show_g_pace = st.checkbox("☑️ Allure", False, key="glob_pace")
+    show_g_power = st.checkbox("☑️ Puissance", False, key="glob_power")
 
-    # ➜ Pour chaque fichier importé : tracer la séance entière
-    for fname, (df_full, window, dur, pauses) in st.session_state.sessions.items():
+    if len(st.session_state.sessions) > 0:
 
-        t0 = df_full["time_s"].iloc[0]
-        tt = df_full["time_s"].values - t0
+        figG, axG = plt.subplots(figsize=(10, 5))
+        legend_handles = []
+        legend_labels = []
 
-        # --- FC ---
-        if show_g_fc and "hr_smooth" in df_full.columns:
-            h = axG.plot(tt, df_full["hr_smooth"], linewidth=1.4, label=f"{fname} — FC")[0]
-            legend_handles.append(h)
-            legend_labels.append(f"{fname} — FC")
+        for fname, (df_full, window, dur, pauses) in st.session_state.sessions.items():
 
-        # --- Allure ---
-        if show_g_pace and ("speed_smooth" in df_full.columns):
-            pace_series = compute_pace_series(df_full)
-            if pace_series is not None:
-                axP = add_pace_axis(axG)
-                h = axP.plot(tt, pace_series, linewidth=1.4, label=f"{fname} — Allure")[0]
+            t0 = df_full["time_s"].iloc[0]
+            tt = df_full["time_s"] - t0
+
+            # FC
+            if show_g_fc and "hr_smooth" in df_full.columns:
+                h = axG.plot(tt, df_full["hr_smooth"], linewidth=1.3, label=f"{fname} — FC")[0]
                 legend_handles.append(h)
-                legend_labels.append(f"{fname} — Allure")
+                legend_labels.append(f"{fname} — FC")
 
-        # --- Puissance ---
-        if show_g_power and ("power_smooth" in df_full.columns):
-            axW = add_power_axis(axG, offset=60)
-            h = axW.plot(tt, df_full["power_smooth"], linewidth=1.4, label=f"{fname} — Puissance")[0]
-            legend_handles.append(h)
-            legend_labels.append(f"{fname} — Puissance")
+            # Allure
+            if show_g_pace and ("speed_smooth" in df_full.columns):
+                pace_series = compute_pace_series(df_full)
+                if pace_series is not None:
+                    axP = add_pace_axis(axG)
+                    h = axP.plot(tt, pace_series, linewidth=1.3, label=f"{fname} — Allure")[0]
+                    legend_handles.append(h)
+                    legend_labels.append(f"{fname} — Allure")
 
-    axG.set_xlabel("Temps total (s)")
-    axG.set_title("Cinétique (séances complètes)")
-    axG.grid(True, alpha=0.2)
+            # Puissance
+            if show_g_power and ("power_smooth" in df_full.columns):
+                axW = add_power_axis(axG, offset=60)
+                h = axW.plot(tt, df_full["power_smooth"], linewidth=1.3, label=f"{fname} — Puissance")[0]
+                legend_handles.append(h)
+                legend_labels.append(f"{fname} — Puissance")
 
-    # --- Légende globale ---
-    if legend_handles:
-        axG.legend(legend_handles, legend_labels, fontsize=8, loc="upper left", frameon=False)
+        axG.set_xlabel("Temps total (s)")
+        axG.set_title("Cinétique — Séances complètes")
+        axG.grid(True, alpha=0.25)
 
-    st.pyplot(figG)
+        if legend_handles:
+            axG.legend(legend_handles, legend_labels, fontsize=8, loc="upper left", frameon=False)
 
-else:
-    st.info("Importe au moins une séance pour afficher un graphique combiné.")
+        st.pyplot(figG)
 
-st.markdown('</div>', unsafe_allow_html=True)
+    else:
+        st.info("Importe au moins une séance pour afficher un graphique combiné.")
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # ---------- Onglet 3 : Analyse générale ----------
 with tabs[2]:
