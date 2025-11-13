@@ -505,21 +505,31 @@ with tabs[0]:
                     dist1_m = segment_distance_m(interval_df1)
                     t1_s = float(end_sec1 - start_sec1)
                     v1_kmh = 3.6 * (dist1_m / t1_s) if t1_s > 0 else 0.0
+                  
+# ➕ Calcul d’allure juste après v1_kmh
 pace1 = format_pace_min_per_km(v1_kmh)
 pace_str1 = f"{int(pace1[0])}:{int(pace1[1]):02d} min/km" if pace1 else "–"
 
+# Tableau métriques avec allure
 table1 = pd.DataFrame({
-    "Métrique": ["FC moyenne (bpm)", "FC max (bpm)", "Dérive (bpm/min)", "Dérive (%/min)",
-                 "Durée (s)", "Distance (m)", "Vitesse moy (km/h)", "Allure moy (min/km)"],
-    "Valeur": [stats1["FC moyenne (bpm)"], stats1["FC max (bpm)"], stats1["Dérive (bpm/min)"],
-               stats1["Dérive (%/min)"], stats1["Durée segment (s)"], round(dist1_m, 1),
-               round(v1_kmh, 2), pace_str1]
+    "Métrique": [
+        "FC moyenne (bpm)", "FC max (bpm)",
+        "Dérive (bpm/min)", "Dérive (%/min)",
+        "Durée (s)", "Distance (m)", "Vitesse moy (km/h)",
+        "Allure moy (min/km)"
+    ],
+    "Valeur": [
+        stats1["FC moyenne (bpm)"], stats1["FC max (bpm)"],
+        stats1["Dérive (bpm/min)"], stats1["Dérive (%/min)"],
+        stats1["Durée segment (s)"], round(dist1_m, 1),
+        round(v1_kmh, 2), pace_str1
+    ]
 })
-
 st.markdown('<div class="table-box">', unsafe_allow_html=True)
 st.dataframe(table1, use_container_width=True, hide_index=True)
 st.markdown('</div>', unsafe_allow_html=True)
 
+# Graphique
 fig1, ax1 = plt.subplots(figsize=(9, 4.8))
 plot_multi_signals(
     ax1, interval_df1, t0=start_sec1, who="T1",
@@ -600,51 +610,50 @@ with ctop[1]:
                 t2_s = float(end_sec2 - start_sec2)
                 v2_kmh = 3.6 * (dist2_m / t2_s) if t2_s > 0 else 0.0
 
-                # 🕒 Calcul allure moyenne
-                pace2 = format_pace_min_per_km(v2_kmh)
-                pace_str2 = f"{int(pace2[0])}:{int(pace2[1]):02d} min/km" if pace2 else "–"
+# ➕ Calcul d’allure juste après v2_kmh
+pace2 = format_pace_min_per_km(v2_kmh)
+pace_str2 = f"{int(pace2[0])}:{int(pace2[1]):02d} min/km" if pace2 else "–"
 
-                # 📊 Tableau des métriques
-                table2 = pd.DataFrame({
-                    "Métrique": [
-                        "FC moyenne (bpm)", "FC max (bpm)",
-                        "Dérive (bpm/min)", "Dérive (%/min)",
-                        "Durée (s)", "Distance (m)",
-                        "Vitesse moy (km/h)", "Allure moy (min/km)"
-                    ],
-                    "Valeur": [
-                        stats2["FC moyenne (bpm)"], stats2["FC max (bpm)"],
-                        stats2["Dérive (bpm/min)"], stats2["Dérive (%/min)"],
-                        stats2["Durée segment (s)"], round(dist2_m, 1),
-                        round(v2_kmh, 2), pace_str2
-                    ]
-                })
+# Tableau métriques avec allure
+table2 = pd.DataFrame({
+    "Métrique": [
+        "FC moyenne (bpm)", "FC max (bpm)",
+        "Dérive (bpm/min)", "Dérive (%/min)",
+        "Durée (s)", "Distance (m)", "Vitesse moy (km/h)",
+        "Allure moy (min/km)"
+    ],
+    "Valeur": [
+        stats2["FC moyenne (bpm)"], stats2["FC max (bpm)"],
+        stats2["Dérive (bpm/min)"], stats2["Dérive (%/min)"],
+        stats2["Durée segment (s)"], round(dist2_m, 1),
+        round(v2_kmh, 2), pace_str2
+    ]
+})
+st.markdown('<div class="table-box">', unsafe_allow_html=True)
+st.dataframe(table2, use_container_width=True, hide_index=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
-                st.markdown('<div class="table-box">', unsafe_allow_html=True)
-                st.dataframe(table2, use_container_width=True, hide_index=True)
-                st.markdown('</div>', unsafe_allow_html=True)
+# Graphique
+fig2, ax2 = plt.subplots(figsize=(9, 4.8))
+plot_multi_signals(
+    ax2, interval_df2, t0=start_sec2, who="T2",
+    show_fc=show_t2_fc,
+    show_pace=show_t2_pace and (get_speed_col(interval_df2) is not None),
+    show_power=show_t2_power and ("power_smooth" in interval_df2.columns),
+    linewidth=1.9
+)
+ax2.set_xlabel("Temps segment (s)")
+ax2.set_title(f"Cinétique – Test 2 ({test2_date})")
+ax2.grid(True, alpha=0.15)
 
-                # 📈 Graphique individuel Test 2
-                fig2, ax2 = plt.subplots(figsize=(9, 4.8))
-                plot_multi_signals(
-                    ax2, interval_df2, t0=start_sec2, who="T2",
-                    show_fc=show_t2_fc,
-                    show_pace=show_t2_pace and (get_speed_col(interval_df2) is not None),
-                    show_power=show_t2_power and ("power_smooth" in interval_df2.columns),
-                    linewidth=1.9
-                )
-                ax2.set_xlabel("Temps segment (s)")
-                ax2.set_title(f"Cinétique – Test 2 ({test2_date})")
-                ax2.grid(True, alpha=0.15)
+handles, labels = [], []
+for a in fig2.axes:
+    h, l = a.get_legend_handles_labels()
+    handles += h; labels += l
+if handles:
+    ax2.legend(handles, labels, fontsize=8, loc="upper left", frameon=False)
+st.pyplot(fig2)
 
-                handles, labels = [], []
-                for a in fig2.axes:
-                    h, l = a.get_legend_handles_labels()
-                    handles += h
-                    labels += l
-                if handles:
-                    ax2.legend(handles, labels, fontsize=8, loc="upper left", frameon=False)
-                st.pyplot(fig2)
 
     st.markdown('</div>', unsafe_allow_html=True)
 
