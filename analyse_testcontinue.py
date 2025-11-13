@@ -655,7 +655,7 @@ if handles:
 st.pyplot(fig2)
 
 
-    st.markdown('</div>', unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
 # ---- Graphique combiné ----
 st.markdown('<div class="report-card">', unsafe_allow_html=True)
