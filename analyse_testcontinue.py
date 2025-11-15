@@ -729,177 +729,146 @@ with tabs[0]:
 # ---------- Onglet 2 : Analyse entraînement ----------
 with tabs[1]:
     st.session_state.active_tab = "training"
-    st.header("⚙️ Analyse entraînement (multi-séances + IC local + FC/Allure/Puissance)")
+    st.header("⚙️ Analyse entraînement (1 séance + intervalles + graphique combiné)")
 
-    # 🧩 Initialisation — interne à l’onglet
-    if "sessions" not in st.session_state:
-        st.session_state.sessions = {}
+    # --- Initialisation ---
+    if "training_session" not in st.session_state:
+        st.session_state.training_session = None
     if "training_intervals" not in st.session_state:
-        st.session_state.training_intervals = {}
+        st.session_state.training_intervals = []
 
-    # 🔥 Empêche toute donnée des TESTS d’apparaître ici
-    interval_df1 = None
-    interval_df2 = None
-
-    # --- Import des fichiers d'entraînement ---
-    uploaded_sessions = st.file_uploader(
-        "Importer un ou plusieurs fichiers (FIT, GPX, CSV, TCX)",
+    # --- Import d'une seule séance ---
+    uploaded_file = st.file_uploader(
+        "Importer un fichier d'entraînement (FIT, GPX, CSV, TCX)",
         type=ACCEPTED_TYPES,
-        accept_multiple_files=True,
-        key="multi_sessions"
+        key="training_file"
     )
 
-    if uploaded_sessions:
-        for file in uploaded_sessions:
-            if file.name not in st.session_state.sessions:
-                try:
-                    df = load_activity(file)
-                    df, window, dur, pauses = smooth_hr(df)
-                    st.session_state.sessions[file.name] = (df, window, dur, pauses)
-                    st.session_state.training_intervals[file.name] = []
-                except Exception as e:
-                    st.error(f"Erreur lors du chargement de {file.name} : {e}")
-                    continue
+    if uploaded_file:
+        try:
+            df = load_activity(uploaded_file)
+            df, window, dur, pauses = smooth_hr(df)
+            st.session_state.training_session = (df, window, dur, pauses)
+        except Exception as e:
+            st.error(f"Erreur chargement séance : {e}")
 
-    # --- Parcours des fichiers importés ---
-    for fname, (df, window, dur, pauses) in st.session_state.sessions.items():
-        st.markdown(f"### 📂 {fname}")
-        st.caption(f"Durée : {dur:.1f}s • Lissage {window}s • Pauses : {pauses}")
+    # Si aucune séance importée → rien à analyser
+    if st.session_state.training_session is None:
+        st.info("Importe une séance pour commencer l’analyse.")
+        st.stop()
 
-        # --- Ajout d’un nouvel intervalle ---
-        if fname not in st.session_state.training_intervals:
-            st.session_state.training_intervals[fname] = []
+    df, window, dur, pauses = st.session_state.training_session
 
-        existing = st.session_state.training_intervals[fname]
+    st.markdown(f"### 📂 Séance importée : **{uploaded_file.name}**")
+    st.caption(f"Durée totale : {dur:.1f}s • Lissage : {window}s • Pauses détectées : {pauses}")
 
-        # ---- Affichage des intervalles ----
-        for i, (start_s, end_s) in enumerate(existing):
-            c1, c2, c3 = st.columns([1, 1, 0.4])
+    # ------- INTERVALLES -------
+    st.markdown("## 📏 Définition des intervalles")
 
-            with c1:
-                s_str = st.text_input(
-                    f"Début (hh:mm:ss) – intervalle {i+1}",
-                    value=f"{int(start_s//60)}:{int(start_s%60):02d}",
-                    key=f"{fname}_start_{i}"
-                )
+    for i, (start_s, end_s) in enumerate(st.session_state.training_intervals):
+        c1, c2, c3 = st.columns([1, 1, 0.3])
 
-            with c2:
-                e_str = st.text_input(
-                    "Fin (hh:mm:ss)",
-                    value=f"{int(end_s//60)}:{int(end_s%60):02d}",
-                    key=f"{fname}_end_{i}"
-                )
-
-            with c3:
-                if st.button("🗑️", key=f"del_{fname}_{i}"):
-                    st.session_state.training_intervals[fname].pop(i)
-                    st.rerun()
-
-            try:
-                s_sec = parse_time_to_seconds(s_str)
-                e_sec = parse_time_to_seconds(e_str)
-                if e_sec > s_sec:
-                    existing[i] = (s_sec, e_sec)
-            except:
-                st.warning(f"⛔ Format invalide intervalle {i+1}")
-
-        # --- Bouton ajout intervalle ---
-        if st.button(f"➕ Ajouter un intervalle ({fname})"):
-            st.session_state.training_intervals[fname].append((0, 300))
-            st.rerun()
-
-        # ---------- Analyse des intervalles ----------
-        for i, (s_sec, e_sec) in enumerate(existing):
-
-            seg = df[(df["time_s"] >= s_sec) & (df["time_s"] <= e_sec)]
-            if seg.empty:
-                continue
-
-            stats, d_bpm, d_pct = analyze_heart_rate(seg)
-            dist_m = segment_distance_m(seg)
-            t_s = e_sec - s_sec
-            v_kmh = 3.6 * (dist_m / t_s) if t_s > 0 else 0.0
-
-            pace = format_pace_min_per_km(v_kmh)
-            pace_str = f"{int(pace[0])}:{int(pace[1]):02d} min/km" if pace else "–"
-
-            st.markdown(f"#### Intervalle {i+1} ({s_sec:.0f}s–{e_sec:.0f}s)")
-            st.dataframe(pd.DataFrame({
-                "Métrique": ["FC moyenne", "Dérive (bpm/min)", "Dérive (%/min)",
-                             "Durée (s)", "Distance (m)", "Vitesse (km/h)", "Allure (min/km)"],
-                "Valeur": [stats['FC moyenne (bpm)'], d_bpm, d_pct, t_s,
-                           round(dist_m, 1), round(v_kmh, 2), pace_str]
-            }), hide_index=True, use_container_width=True)
-
-            fig, ax = plt.subplots(figsize=(9, 4.2))
-            plot_multi_signals(
-                ax, seg, t0=s_sec, who=fname[:3],
-                show_fc=True,
-                show_pace=(get_speed_col(seg) is not None),
-                show_power=("power_smooth" in seg.columns),
-                linewidth=1.8
+        with c1:
+            s_str = st.text_input(
+                f"Début intervalle {i+1} (hh:mm:ss)",
+                value=f"{int(start_s//60)}:{int(start_s%60):02d}",
+                key=f"int_start_{i}"
             )
-            ax.set_title(f"Cinétique – {fname} (intervalle {i+1})")
-            ax.set_xlabel("Temps segment (s)")
-            ax.grid(True, alpha=0.2)
-            st.pyplot(fig)
+        with c2:
+            e_str = st.text_input(
+                f"Fin intervalle {i+1}",
+                value=f"{int(end_s//60)}:{int(end_s%60):02d}",
+                key=f"int_end_{i}"
+            )
+        with c3:
+            if st.button("🗑️", key=f"del_int_{i}"):
+                st.session_state.training_intervals.pop(i)
+                st.rerun()
 
-    # -------------------------------------------------------------------
-    # 🔥🔥🔥 GRAPHQIUE COMBINÉ (TOTAL SÉANCE) — VERSION CORRIGÉE 🔥🔥🔥
-    # -------------------------------------------------------------------
-    st.markdown('<div class="report-card">', unsafe_allow_html=True)
-    st.subheader("📊 Graphique combiné — séances complètes (FC / Allure / Puissance)")
+        try:
+            s_sec = parse_time_to_seconds(s_str)
+            e_sec = parse_time_to_seconds(e_str)
+            if e_sec > s_sec:
+                st.session_state.training_intervals[i] = (s_sec, e_sec)
+        except:
+            st.warning(f"⛔ Format invalide intervalle {i+1}")
 
-    show_g_fc = st.checkbox("☑️ FC", True, key="glob_fc")
-    show_g_pace = st.checkbox("☑️ Allure", False, key="glob_pace")
-    show_g_power = st.checkbox("☑️ Puissance", False, key="glob_power")
+    if st.button("➕ Ajouter un intervalle"):
+        st.session_state.training_intervals.append((0, 300))
+        st.rerun()
 
-    if len(st.session_state.sessions) > 0:
+    # ------- ANALYSE DES INTERVALLES -------
+    st.markdown("## 🔍 Analyse des intervalles")
 
-        figG, axG = plt.subplots(figsize=(10, 5))
-        legend_handles = []
-        legend_labels = []
+    interval_segments = []
 
-        for fname, (df_full, window, dur, pauses) in st.session_state.sessions.items():
+    for i, (s_sec, e_sec) in enumerate(st.session_state.training_intervals):
 
-            t0 = df_full["time_s"].iloc[0]
-            tt = df_full["time_s"] - t0
+        seg = df[(df["time_s"] >= s_sec) & (df["time_s"] <= e_sec)]
+        if seg.empty:
+            continue
 
-            # FC
-            if show_g_fc and "hr_smooth" in df_full.columns:
-                h = axG.plot(tt, df_full["hr_smooth"], linewidth=1.3, label=f"{fname} — FC")[0]
-                legend_handles.append(h)
-                legend_labels.append(f"{fname} — FC")
+        interval_segments.append((i+1, seg, s_sec, e_sec))
 
-            # Allure
-            if show_g_pace and ("speed_smooth" in df_full.columns):
-                pace_series = compute_pace_series(df_full)
-                if pace_series is not None:
-                    axP = add_pace_axis(axG)
-                    h = axP.plot(tt, pace_series, linewidth=1.3, label=f"{fname} — Allure")[0]
-                    legend_handles.append(h)
-                    legend_labels.append(f"{fname} — Allure")
+        stats, d_bpm, d_pct = analyze_heart_rate(seg)
+        dist_m = segment_distance_m(seg)
+        t_s = e_sec - s_sec
+        v_kmh = 3.6 * dist_m / t_s if t_s > 0 else 0
+        pace = format_pace_min_per_km(v_kmh)
+        pace_str = f"{pace[0]}:{pace[1]:02d} min/km" if pace else "–"
 
-            # Puissance
-            if show_g_power and ("power_smooth" in df_full.columns):
-                axW = add_power_axis(axG, offset=60)
-                h = axW.plot(tt, df_full["power_smooth"], linewidth=1.3, label=f"{fname} — Puissance")[0]
-                legend_handles.append(h)
-                legend_labels.append(f"{fname} — Puissance")
+        st.markdown(f"### Intervalle {i+1} ({s_sec:.0f}s → {e_sec:.0f}s)")
+        st.dataframe(pd.DataFrame({
+            "Métrique": ["FC moyenne", "Dérive bpm/min", "Dérive %/min",
+                         "Durée (s)", "Distance (m)", "Vitesse (km/h)", "Allure"],
+            "Valeur": [stats["FC moyenne (bpm)"], d_bpm, d_pct,
+                       t_s, round(dist_m, 1), round(v_kmh, 2), pace_str]
+        }), hide_index=True, use_container_width=True)
 
-        axG.set_xlabel("Temps total (s)")
-        axG.set_title("Cinétique — Séances complètes")
-        axG.grid(True, alpha=0.25)
+        # Graphique individuel
+        fig, ax = plt.subplots(figsize=(9, 4.2))
+        plot_multi_signals(
+            ax, seg, t0=s_sec, who=f"Int{i+1}",
+            show_fc=True,
+            show_pace=("speed_smooth" in seg.columns),
+            show_power=("power_smooth" in seg.columns)
+        )
+        ax.set_title(f"Cinétique — Intervalle {i+1}")
+        ax.grid(True, alpha=0.25)
+        st.pyplot(fig)
 
-        if legend_handles:
-            axG.legend(legend_handles, legend_labels, fontsize=8, loc="upper left", frameon=False)
+    # ------- GRAPHIQUE COMBINÉ -------
+    if interval_segments:
+        st.markdown("## 📊 Graphique combiné — tous les intervalles superposés")
 
-        st.pyplot(figG)
+        show_fc = st.checkbox("☑ FC", True, key="comb_fc")
+        show_pace = st.checkbox("☑ Allure", False, key="comb_pace")
+        show_power = st.checkbox("☑ Puissance", False, key="comb_pow")
 
-    else:
-        st.info("Importe au moins une séance pour afficher un graphique combiné.")
+        figC, axC = plt.subplots(figsize=(10, 4.8))
 
-    st.markdown('</div>', unsafe_allow_html=True)
+        for idx, seg, s0, s1 in interval_segments:
+            plot_multi_signals(
+                axC, seg, t0=s0,
+                who=f"Int{idx}",
+                show_fc=show_fc,
+                show_pace=show_pace and ("speed_smooth" in seg.columns),
+                show_power=show_power and ("power_smooth" in seg.columns)
+            )
+
+        axC.set_title("Cinétique combinée — Intervalles superposés")
+        axC.set_xlabel("Temps segment (s)")
+        axC.grid(True, alpha=0.25)
+
+        # Légende
+        handles, labels = [], []
+        for a in figC.axes:
+            h, l = a.get_legend_handles_labels()
+            handles += h; labels += l
+        if handles:
+            axC.legend(handles, labels, fontsize=8, loc="upper left")
+
+        st.pyplot(figC)
 
 # ---------- Onglet 3 : Analyse générale ----------
 with tabs[2]:
