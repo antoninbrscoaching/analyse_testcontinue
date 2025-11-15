@@ -726,6 +726,110 @@ with tabs[0]:
 
     st.markdown('</div>', unsafe_allow_html=True)
 
+# =====================================================
+# -------------- ANALYSE GÉNÉRALE (fusion ex-Onglet 3)
+# =====================================================
+st.markdown('<div class="report-card">', unsafe_allow_html=True)
+st.subheader("📊 Analyse générale (Vitesse Critique + Index Cinétique)")
+
+if (
+    interval_df1 is not None and interval_df2 is not None
+    and drift1_pct is not None and drift2_pct is not None
+):
+
+    # ----------------------------------------------
+    # ⚙️ VITESSE CRITIQUE (VC)
+    # ----------------------------------------------
+    st.subheader("⚙️ Calcul de la Vitesse Critique (VC)")
+
+    if dist1_m and dist2_m and t1_s and t2_s and t1_s != t2_s:
+        vc_m_s = (dist2_m - dist1_m) / (t2_s - t1_s)
+        d_prime = dist1_m - vc_m_s * t1_s
+
+        vc_kmh = vc_m_s * 3.6  # km/h
+        # Nouveauté ⬇ conversion en min/km
+        if vc_m_s > 0:
+            pace_vc_minutes = (1 / (vc_m_s * 3.6)) * 60  # min/km
+            pace_vc_min = int(pace_vc_minutes)
+            pace_vc_sec = int((pace_vc_minutes - pace_vc_min) * 60)
+            pace_vc_str = f"{pace_vc_min}:{pace_vc_sec:02d} min/km"
+        else:
+            pace_vc_str = "–"
+
+        st.success(
+            f"**Vitesse Critique (VC) = {vc_kmh:.2f} km/h**\n\n"
+            f"➡️ **Soit {pace_vc_str}**\n\n"
+            f"**D′ = {d_prime:.1f} m**"
+        )
+
+        st.caption("La VC représente la vitesse maximale soutenable sans dérive majeure.")
+    else:
+        st.warning("Impossible de calculer la VC (valeurs invalides).")
+
+    # ----------------------------------------------
+    # ⚙️ INDEX DE CINÉTIQUE (IC)
+    # ----------------------------------------------
+    st.subheader("⚙️ Index de Cinétique (IC)")
+
+    ic_val, unite, msg, _, reco = compute_index_cinetique(
+        drift1_pct, drift2_pct, drift1_bpm, drift2_bpm
+    )
+
+    if ic_val is not None:
+        st.markdown(f"**IC = {ic_val*100:.1f}%** ({unite})")
+        st.info(msg)
+
+        st.markdown(f"**{reco['titre']}**")
+        for s in reco["seances"]:
+            st.markdown(f"• {s}")
+    else:
+        st.warning("Impossible de calculer l'Index de Cinétique.")
+
+    # ----------------------------------------------
+    # 📄 EXPORT PDF
+    # ----------------------------------------------
+    st.subheader("📄 Export PDF")
+    if st.button("Générer le rapport PDF"):
+        figs_export = []
+
+        # Test 1
+        if interval_df1 is not None:
+            fig_export1, axE1 = plt.subplots(figsize=(9, 4.5))
+            plot_multi_signals(
+                axE1, interval_df1, t0=start_sec1, who="T1",
+                show_fc=True,
+                show_pace=(get_speed_col(interval_df1) is not None),
+                show_power=("power_smooth" in interval_df1.columns)
+            )
+            axE1.set_title(f"Test 1 – {test1_date}")
+            figs_export.append(fig_export1)
+
+        # Test 2
+        if interval_df2 is not None:
+            fig_export2, axE2 = plt.subplots(figsize=(9, 4.5))
+            plot_multi_signals(
+                axE2, interval_df2, t0=start_sec2, who="T2",
+                show_fc=True,
+                show_pace=(get_speed_col(interval_df2) is not None),
+                show_power=("power_smooth" in interval_df2.columns)
+            )
+            axE2.set_title(f"Test 2 – {test2_date}")
+            figs_export.append(fig_export2)
+
+        # PDF
+        buf_pdf = fig_to_pdf_bytes(figs_export)
+        st.download_button(
+            label="📥 Télécharger le rapport PDF",
+            data=buf_pdf,
+            file_name=f"rapport_endurance_{date.today()}.pdf",
+            mime="application/pdf"
+        )
+
+else:
+    st.info("🧩 Pour accéder à l’analyse générale, importe deux tests valides.")
+
+st.markdown('</div>', unsafe_allow_html=True)
+
 # ---------- Onglet 2 : Analyse entraînement ----------
 with tabs[1]:
     st.session_state.active_tab = "training"
@@ -869,70 +973,3 @@ with tabs[1]:
             axC.legend(handles, labels, fontsize=8, loc="upper left")
 
         st.pyplot(figC)
-
-# ---------- Onglet 3 : Analyse générale ----------
-with tabs[2]:
-    st.header("📊 Analyse générale (Vitesse Critique + Index Cinétique)")
-
-    if interval_df1 is not None and interval_df2 is not None and drift1_pct is not None and drift2_pct is not None:
-        st.subheader("⚙️ Calcul de la Vitesse Critique (VC)")
-
-        if dist1_m and dist2_m and t1_s and t2_s and t1_s != t2_s:
-            vc_m_s = (dist2_m - dist1_m) / (t2_s - t1_s)
-            d_prime = dist1_m - vc_m_s * t1_s
-            vc_kmh = vc_m_s * 3.6
-            st.success(f"**Vitesse Critique (VC) = {vc_kmh:.2f} km/h** • D′ = {d_prime:.1f} m")
-
-            st.caption("La VC est la vitesse soutenable sans dérive majeure.")
-        else:
-            st.warning("Impossible de calculer la VC (valeurs invalides).")
-
-        st.subheader("⚙️ Index de Cinétique (IC)")
-        ic_val, unite, msg, _, reco = compute_index_cinetique(
-            drift1_pct, drift2_pct, drift1_bpm, drift2_bpm
-        )
-
-        if ic_val is not None:
-            st.markdown(f"**IC = {ic_val*100:.1f}%** ({unite})")
-            st.info(msg)
-            st.markdown(f"**{reco['titre']}**")
-            for s in reco["seances"]:
-                st.markdown(f"• {s}")
-        else:
-            st.warning("Impossible de calculer l'Index de Cinétique (IC).")
-
-        # --------- Export PDF ---------
-        st.subheader("📄 Export PDF")
-        if st.button("Générer le rapport PDF"):
-            figs_export = []
-            if interval_df1 is not None:
-                fig_export1, axE1 = plt.subplots(figsize=(9, 4.5))
-                plot_multi_signals(
-                    axE1, interval_df1, t0=start_sec1, who="T1",
-                    show_fc=True,
-                    show_pace=(get_speed_col(interval_df1) is not None),
-                    show_power=("power_smooth" in interval_df1.columns)
-                )
-                axE1.set_title(f"Test 1 – {test1_date}")
-                figs_export.append(fig_export1)
-
-            if interval_df2 is not None:
-                fig_export2, axE2 = plt.subplots(figsize=(9, 4.5))
-                plot_multi_signals(
-                    axE2, interval_df2, t0=start_sec2, who="T2",
-                    show_fc=True,
-                    show_pace=(get_speed_col(interval_df2) is not None),
-                    show_power=("power_smooth" in interval_df2.columns)
-                )
-                axE2.set_title(f"Test 2 – {test2_date}")
-                figs_export.append(fig_export2)
-
-            buf_pdf = fig_to_pdf_bytes(figs_export)
-            st.download_button(
-                label="📥 Télécharger le rapport PDF",
-                data=buf_pdf,
-                file_name=f"rapport_endurance_{date.today()}.pdf",
-                mime="application/pdf"
-            )
-    else:
-        st.info("🧩 Pour accéder à l’analyse générale, importe deux tests valides.")
