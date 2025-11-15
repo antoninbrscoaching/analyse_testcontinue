@@ -429,7 +429,7 @@ def plot_multi_signals(ax, df, t0=0.0, who="T1",
 st.title("🏃‍♂️ Analyse de Tests d'Endurance + Vitesse Critique (Export PDF)")
 
 # --- Création des onglets ---
-tabs = st.tabs(["🧪 Tests d'endurance", "⚙️ Analyse entraînement", "📊 Analyse générale"])
+tabs = st.tabs(["🧪 Tests d'endurance", "⚙️ Analyse entraînement"])
 
 # 🧭 Détection / suivi de l'onglet actif
 if "active_tab" not in st.session_state:
