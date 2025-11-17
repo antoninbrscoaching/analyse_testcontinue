@@ -228,6 +228,7 @@ if "tests_data" not in st.session_state:
 # ========= ONGLET 1 : MULTI-TESTS (2 à 6 tests) =======
 # =====================================================
 
+tabs = st.tabs(["Tests endurance", "Analyse entraînement"])
 with tabs[0]:
     st.header("🧪 Tests d'endurance (2 à 6 tests)")
 
