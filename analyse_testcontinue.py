@@ -663,13 +663,12 @@ with tabs[0]:
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # ============================================================
-    # ===================== MODÈLE LOG-LOG ========================
-    # ============================================================
+      # ===================== MODÈLE POWER LAW ======================
     st.markdown('<div class="report-card">', unsafe_allow_html=True)
-    st.subheader("📈 Modèle Log-Log (T = A · V^{-k})")
+    st.subheader("📈 Modèle Power Law (T = A · V^{-k})")
 
     if len(valid_tests) >= 2:
+        # V = vitesse moyenne sur chaque test (m/s)
         V = np.array([t["dist_m"] / t["t_s"] for t in valid_tests if t["t_s"] > 0])
         TT = np.array([t["t_s"] for t in valid_tests if t["t_s"] > 0])
 
@@ -678,80 +677,132 @@ with tabs[0]:
         TT = TT[positive_mask]
 
         if len(V) >= 2:
-            X = np.log(1 / V)
+            # log(T) = log(A) - k · log(V)
+            X = np.log(V)
             Y = np.log(TT)
 
-            k_log, lnA = np.polyfit(X, Y, 1)
-            A = float(np.exp(lnA))
+            slope_pl, intercept_pl = np.polyfit(X, Y, 1)
+            k_log = -slope_pl          # k > 0
+            A = float(np.exp(intercept_pl))
 
-            st.write(f"**k = {k_log:.3f}**, **A = {A:.2f}** (modèle log-log)")
+            st.write(f"**k = {k_log:.3f}**, **A = {A:.2f}** (modèle Power Law)")
         else:
-            st.info("Pas assez de vitesses positives pour ajuster le modèle log-log.")
+            st.info("Pas assez de vitesses positives pour ajuster le modèle Power Law.")
     else:
-        st.info("Au moins 2 tests requis pour le modèle log-log.")
+        st.info("Au moins 2 tests requis pour le modèle Power Law.")
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # ============================================================
-    # =============== TABLEAU PRÉDICTIF 80–130 % ==================
-    # ============================================================
+      # =============== TABLEAU PRÉDICTIF (CHOIX DU MODÈLE) =========
     st.markdown('<div class="report-card">', unsafe_allow_html=True)
-    st.subheader("📊 Prédictions selon intensité (80–130% VC)")
+    st.subheader("📊 Prédictions selon intensité")
 
-    if (VC_kmh is not None and VC_kmh > 0 and
-        A is not None and k_log is not None and
-        D_prime is not None):
+    # Choix du modèle : soit Power Law (<100% VC), soit D′ (>100% VC)
+    model_choice = st.radio(
+        "Choisir le modèle utilisé pour le tableau :",
+        ("Modèle Power Law (<100% VC)", "Modèle D′ (>100% VC)"),
+        index=0,
+        horizontal=True
+    )
 
-        pourcentages = list(range(80, 100, 2)) + list(range(102, 132, 2))
-        rows = []
+    VC_ms = VC_kmh / 3.6 if (VC_kmh is not None and VC_kmh > 0) else None
 
-        VC_ms = VC_kmh / 3.6
+    # ---------- CAS 1 : POWER LAW (<100% VC) ----------
+    if model_choice.startswith("Modèle Power"):
 
-        for p in pourcentages:
-            v_kmh = VC_kmh * (p / 100)
-            v_ms = v_kmh / 3.6
-            if v_ms <= 0:
-                continue
+        if VC_ms is not None and A is not None and k_log is not None:
 
-            # Zone 80–100% : modèle LOG-LOG
-            if p < 100:
+            # Par exemple : 80 → 98 % VC
+            pourcentages = list(range(80, 100, 2))
+            rows = []
+
+            for p in pourcentages:
+                v_kmh = VC_kmh * (p / 100.0)
+                v_ms = v_kmh / 3.6
+                if v_ms <= 0:
+                    continue
+
+                # T = A · V^{-k}
                 Tlim = A * (v_ms ** (-k_log))
+
+                if Tlim <= 0 or not math.isfinite(Tlim):
+                    continue
+
+                m = int(Tlim // 60)
+                s = int(Tlim % 60)
+                T_str = f"{m}:{s:02d}"
+
+                pace_min = 60.0 / v_kmh
+                sec = int(round(pace_min * 60))
+                pm, ps = sec // 60, sec % 60
+                pace_str = f"{pm}:{ps:02d}"
+
+                rows.append({
+                    "% VC": f"{p}%",
+                    "Modèle": "Power Law",
+                    "Temps limite (mm:ss)": T_str,
+                    "Allure (min/km)": pace_str
+                })
+
+            if rows:
+                df_pred = pd.DataFrame(rows)
+                st.dataframe(df_pred, hide_index=True, use_container_width=True)
             else:
+                st.info("Aucune prédiction exploitable avec le modèle Power Law (paramètres invalides).")
+
+        else:
+            st.info("⚠️ Impossible : paramètres Power Law (A, k) ou VC non disponibles.")
+
+    # ---------- CAS 2 : D′ (>100% VC) ----------
+    else:
+
+        if VC_ms is not None and D_prime is not None and D_prime > 0:
+
+            # Par exemple : 102 → 130 % VC
+            pourcentages = list(range(102, 132, 2))
+            rows = []
+
+            for p in pourcentages:
+                v_kmh = VC_kmh * (p / 100.0)
+                v_ms = v_kmh / 3.6
+
                 denom = v_ms - VC_ms
                 if denom <= 0:
                     continue
+
+                # T = D′ / (v - VC)
                 Tlim = D_prime / denom
 
-            if Tlim <= 0 or not math.isfinite(Tlim):
-                continue
+                if Tlim <= 0 or not math.isfinite(Tlim):
+                    continue
 
-            m = int(Tlim // 60)
-            s = int(Tlim % 60)
-            T_str = f"{m}:{s:02d}"
+                m = int(Tlim // 60)
+                s = int(Tlim % 60)
+                T_str = f"{m}:{s:02d}"
 
-            pace_min = 60.0 / v_kmh
-            sec = int(round(pace_min * 60))
-            pm, ps = sec // 60, sec % 60
-            pace_str = f"{pm}:{ps:02d}"
+                pace_min = 60.0 / v_kmh
+                sec = int(round(pace_min * 60))
+                pm, ps = sec // 60, sec % 60
+                pace_str = f"{pm}:{ps:02d}"
 
-            rows.append({
-                "% VC": f"{p}%",
-                "Modèle": "Log" if p < 100 else "D′",
-                "Temps limite (mm:ss)": T_str,
-                "Allure (min/km)": pace_str
-            })
+                rows.append({
+                    "% VC": f"{p}%",
+                    "Modèle": "D′",
+                    "Temps limite (mm:ss)": T_str,
+                    "Allure (min/km)": pace_str
+                })
 
-        if rows:
-            df_pred = pd.DataFrame(rows)
-            st.dataframe(df_pred, hide_index=True, use_container_width=True)
+            if rows:
+                df_pred = pd.DataFrame(rows)
+                st.dataframe(df_pred, hide_index=True, use_container_width=True)
+            else:
+                st.info("Aucune prédiction exploitable avec le modèle D′ (paramètres invalides).")
+
         else:
-            st.info("Aucune prédiction exploitable (problème de paramètres ou d’inputs).")
-
-    else:
-        st.info("⚠️ Impossible : VC ou modèle log-log / D′ non disponible.")
+            st.info("⚠️ Impossible : VC ou D′ non disponible pour le modèle D′.")
 
     st.markdown("</div>", unsafe_allow_html=True)
-
+  
     # ============================================================
     # ====================== INDEX CINÉTIQUE ======================
     # ============================================================
