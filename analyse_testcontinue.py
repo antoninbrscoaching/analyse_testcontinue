@@ -518,7 +518,64 @@ else:
 
 st.markdown('</div>', unsafe_allow_html=True)
 
+# ============================================================
+# =============== TABLEAU PRÉDICTIF 80–130 % ==================
+# ============================================================
 
+st.markdown('<div class="report-card">', unsafe_allow_html=True)
+st.subheader("📊 Prédictions selon intensité (80–130% VC)")
+
+if len(tests_data) >= 2 and VC_kmh > 0:
+
+    pourcentages = list(range(80, 100, 2)) + list(range(102, 132, 2))
+    rows = []
+
+    VC_ms = VC_kmh / 3.6
+
+    for p in pourcentages:
+
+        v_kmh = VC_kmh * (p / 100)
+        v_ms = v_kmh / 3.6
+
+        # ---------- Zone 80–100% : modèle LOG ----------
+        if p < 100:
+            Tlim = A * (v_ms ** (-k))
+
+        # ---------- Zone >100% : modèle hyperbolique ----------
+        else:
+            denom = v_ms - VC_ms
+            if denom <= 0:
+                continue
+            Tlim = D_prime / denom
+
+        if Tlim <= 0 or not math.isfinite(Tlim):
+            continue
+
+        # Format temps limite
+        m = int(Tlim // 60)
+        s = int(Tlim % 60)
+        T_str = f"{m}:{s:02d}"
+
+        # Allure min/km
+        pace_min = 60.0 / v_kmh
+        sec = int(round(pace_min * 60))
+        pm, ps = sec // 60, sec % 60
+        pace_str = f"{pm}:{ps:02d}"
+
+        rows.append({
+            "% VC": f"{p}%",
+            "Modèle": "Log" if p < 100 else "D′",
+            "Temps limite (mm:ss)": T_str,
+            "Allure (min/km)": pace_str
+        })
+
+    df_pred = pd.DataFrame(rows)
+    st.dataframe(df_pred, hide_index=True, use_container_width=True)
+
+else:
+    st.info("⚠️ Impossible : VC ou modèle log-log non disponible.")
+
+st.markdown("</div>", unsafe_allow_html=True)
 
 # ============================================================
 # ====================== INDEX CINÉTIQUE ======================
