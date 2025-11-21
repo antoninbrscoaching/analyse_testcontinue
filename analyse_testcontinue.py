@@ -143,6 +143,9 @@ def get_speed_col(df):
     if "speed" in df.columns: return "speed"
     return None
 
+# ------------------------------------------------------------
+# Lissage Cardio
+# ------------------------------------------------------------
 def smooth_hr(df, time_col="timestamp", hr_col="heart_rate"):
     df = df.copy().sort_values(by=time_col).reset_index(drop=True)
     df[time_col] = pd.to_datetime(df[time_col], errors="coerce")
@@ -179,6 +182,10 @@ def smooth_hr(df, time_col="timestamp", hr_col="heart_rate"):
     pauses = (df["delta_t"] > 2 * median_step).sum()
     return df, window_sec, total_dur, pauses
 
+
+# ------------------------------------------------------------
+# Analyse FC
+# ------------------------------------------------------------
 def analyze_heart_rate(df):
     hr = df["hr_smooth"].dropna()
     mean_hr = hr.mean()
@@ -199,6 +206,10 @@ def analyze_heart_rate(df):
     }
     return stats, float(drift_per_min), (None if np.isnan(drift_percent) else float(drift_percent))
 
+
+# ------------------------------------------------------------
+# Outils divers
+# ------------------------------------------------------------
 def parse_time_to_seconds(tstr: str) -> int:
     tstr = tstr.strip()
     if ":" not in tstr:
@@ -216,12 +227,14 @@ def parse_time_to_seconds(tstr: str) -> int:
         h, m, s = 0, 0, parts[0]
     return int(h * 3600 + m * 60 + s)
 
+
 def haversine_dist_m(lat1, lon1, lat2, lon2):
     R = 6371008.8
     phi1 = np.radians(lat1); phi2 = np.radians(lat2)
     dphi = np.radians(lat2 - lat1); dlambda = np.radians(lon2 - lon1)
     a = np.sin(dphi/2)**2 + np.cos(phi1)*np.cos(phi2)*np.sin(dlambda/2)**2
     return 2 * R * np.arcsin(np.sqrt(a))
+
 
 def segment_distance_m(df_seg):
     if df_seg is None or df_seg.empty or len(df_seg) < 2:
@@ -253,12 +266,14 @@ def segment_distance_m(df_seg):
 
     return 0.0
 
+
 def format_pace_min_per_km(v_kmh):
     if v_kmh <= 0 or not math.isfinite(v_kmh):
         return None
     min_per_km = 60.0 / v_kmh
     total_seconds = int(round(min_per_km * 60.0))
     return total_seconds // 60, total_seconds % 60, min_per_km
+
 
 def fig_to_pdf_bytes(figs):
     if not isinstance(figs, (list, tuple)):
@@ -270,6 +285,57 @@ def fig_to_pdf_bytes(figs):
             pdf.savefig(f, bbox_inches="tight")
     buf.seek(0)
     return buf
+
+
+# ------------------------------------------------------------
+# NOUVEAUX OUTILS — FC vs Allure
+# ------------------------------------------------------------
+
+def compute_pace_series(df):
+    """Convertit la vitesse m/s → min/km (retourne une série pandas)."""
+    sp = get_speed_col(df)
+    if not sp:
+        return None
+
+    v = df[sp].astype(float)
+    v_kmh = v * 3.6
+    pace = 60.0 / v_kmh.replace(0, np.nan)
+    return pace
+
+
+def compare_fc_pace(df):
+    """
+    Analyse la relation FC ↗️ / Allure ↘️ (ou inverse)
+    Retourne :
+        - corr : coefficient de corrélation
+        - slope : pente linéaire FC = a·allure + b
+        - msg : interprétation automatique
+    """
+    if "speed_smooth" not in df.columns:
+        return None, None, "Allure non disponible"
+
+    pace = compute_pace_series(df)
+    if pace is None:
+        return None, None, "Allure non disponible"
+
+    mask = np.isfinite(df["hr_smooth"]) & np.isfinite(pace)
+    if mask.sum() < 30:
+        return None, None, "Données insuffisantes"
+
+    x = pace[mask]
+    y = df["hr_smooth"][mask]
+
+    corr = np.corrcoef(x, y)[0, 1]
+    slope, intercept, _, _, _ = linregress(x, y)
+
+    if corr > 0.5:
+        msg = "La FC augmente lorsque l’allure ralentit → dérive cardiaque ou fatigue."
+    elif corr < -0.5:
+        msg = "La FC augmente quand l’allure accélère → comportement normal."
+    else:
+        msg = "Relation faible : allure et FC peu liées sur ce segment."
+
+    return float(corr), float(slope), msg
 
 # ========================= INDEX CINÉTIQUE ==============================
 
@@ -978,44 +1044,61 @@ with tabs[1]:
         st.session_state.training_intervals.append((0, 300))
         st.rerun()
 
-    # ------- ANALYSE DES INTERVALLES -------
-    st.markdown("## 🔍 Analyse des intervalles")
+# ------- ANALYSE DES INTERVALLES -------
+st.markdown("## 🔍 Analyse des intervalles")
 
-    interval_segments = []
+interval_segments = []
 
-    for i, (s_sec, e_sec) in enumerate(st.session_state.training_intervals):
+for i, (s_sec, e_sec) in enumerate(st.session_state.training_intervals):
 
-        seg = df[(df["time_s"] >= s_sec) & (df["time_s"] <= e_sec)]
-        if seg.empty:
-            continue
+    seg = df[(df["time_s"] >= s_sec) & (df["time_s"] <= e_sec)]
+    if seg.empty:
+        continue
 
-        interval_segments.append((i+1, seg, s_sec, e_sec))
+    interval_segments.append((i+1, seg, s_sec, e_sec))
 
-        stats, d_bpm, d_pct = analyze_heart_rate(seg)
-        dist_m = segment_distance_m(seg)
-        t_s = e_sec - s_sec
-        v_kmh = 3.6 * dist_m / t_s if t_s > 0 else 0
-        pace = format_pace_min_per_km(v_kmh)
-        pace_str = f"{pace[0]}:{pace[1]:02d} min/km" if pace else "–"
+    stats, d_bpm, d_pct = analyze_heart_rate(seg)
+    dist_m = segment_distance_m(seg)
+    t_s = e_sec - s_sec
+    v_kmh = 3.6 * dist_m / t_s if t_s > 0 else 0
+    pace = format_pace_min_per_km(v_kmh)
+    pace_str = f"{pace[0]}:{pace[1]:02d} min/km" if pace else "–"
 
-        st.markdown(f"### Intervalle {i+1} ({s_sec:.0f}s → {e_sec:.0f}s)")
-        st.dataframe(pd.DataFrame({
-            "Métrique": ["FC moyenne", "Dérive bpm/min", "Dérive %/min",
-                         "Durée (s)", "Distance (m)", "Vitesse (km/h)", "Allure"],
-            "Valeur": [stats["FC moyenne (bpm)"], d_bpm, d_pct,
-                       t_s, round(dist_m, 1), round(v_kmh, 2), pace_str]
-        }), hide_index=True, use_container_width=True)
+    st.markdown(f"### Intervalle {i+1} ({s_sec:.0f}s → {e_sec:.0f}s)")
+    st.dataframe(pd.DataFrame({
+        "Métrique": ["FC moyenne", "Dérive bpm/min", "Dérive %/min",
+                     "Durée (s)", "Distance (m)", "Vitesse (km/h)", "Allure"],
+        "Valeur": [stats["FC moyenne (bpm)"], d_bpm, d_pct,
+                   t_s, round(dist_m, 1), round(v_kmh, 2), pace_str]
+    }), hide_index=True, use_container_width=True)
 
-        fig, ax = plt.subplots(figsize=(9, 4.2))
-        plot_multi_signals(
-            ax, seg, t0=s_sec, who=f"Int{i+1}",
-            show_fc=True,
-            show_pace=("speed_smooth" in seg.columns),
-            show_power=("power_smooth" in seg.columns)
-        )
-        ax.set_title(f"Cinétique — Intervalle {i+1}")
-        ax.grid(True, alpha=0.25)
-        st.pyplot(fig)
+    # >>>>> AJOUT FC vs ALLURE <<<<<
+    corr_fcpace, slope_fcpace, msg_fcpace = compare_fc_pace(seg)
+
+    with st.expander("📉 Relation FC ↗️ / Allure ↘️ (intervalle)"):
+        if corr_fcpace is None:
+            st.info(msg_fcpace)
+        else:
+            st.markdown(f"""
+            **Corrélation FC ↔️ Allure :** `{corr_fcpace:.3f}`  
+            **Pente FC = a·allure + b :** `{slope_fcpace:.2f}`  
+
+            🧠 **Interprétation :**  
+            {msg_fcpace}
+            """)
+
+    # >>>>> FIN AJOUT <<<<<
+
+    fig, ax = plt.subplots(figsize=(9, 4.2))
+    plot_multi_signals(
+        ax, seg, t0=s_sec, who=f"Int{i+1}",
+        show_fc=True,
+        show_pace=("speed_smooth" in seg.columns),
+        show_power=("power_smooth" in seg.columns)
+    )
+    ax.set_title(f"Cinétique — Intervalle {i+1}")
+    ax.grid(True, alpha=0.25)
+    st.pyplot(fig)
 
     # ------- GRAPHIQUE COMBINÉ -------
     if interval_segments:
