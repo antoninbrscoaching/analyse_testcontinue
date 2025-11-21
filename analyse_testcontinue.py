@@ -975,17 +975,18 @@ with tabs[0]:
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------
-# ONGLET 2 : ANALYSE ENTRAÎNEMENT (ta version conservée)
+# ONGLET 2 : ANALYSE ENTRAÎNEMENT (1 séance + intervalles + cinétiques)
 # ---------------------------------------------------------------------
 with tabs[1]:
     st.session_state.active_tab = "training"
-    st.header("⚙️ Analyse entraînement (1 séance + intervalles + graphique combiné)")
+    st.header("⚙️ Analyse entraînement (1 séance + intervalles + cinétiques)")
 
     if "training_session" not in st.session_state:
         st.session_state.training_session = None
     if "training_intervals" not in st.session_state:
         st.session_state.training_intervals = []
 
+    # ---- IMPORT ----
     uploaded_file = st.file_uploader(
         "Importer un fichier d'entraînement (FIT, GPX, CSV, TCX)",
         type=ACCEPTED_TYPES,
@@ -1009,7 +1010,9 @@ with tabs[1]:
     st.markdown(f"### 📂 Séance importée : **{uploaded_file.name}**")
     st.caption(f"Durée totale : {dur:.1f}s • Lissage : {window}s • Pauses détectées : {pauses}")
 
-    # ------- INTERVALLES -------
+    # ---------------------------------------------------------------
+    # 1) DÉFINITION DES INTERVALLES
+    # ---------------------------------------------------------------
     st.markdown("## 📏 Définition des intervalles")
 
     for i, (start_s, end_s) in enumerate(st.session_state.training_intervals):
@@ -1019,16 +1022,16 @@ with tabs[1]:
             s_str = st.text_input(
                 f"Début intervalle {i+1} (hh:mm:ss)",
                 value=f"{int(start_s//60)}:{int(start_s%60):02d}",
-                key=f"int_start_{i}"
+                key=f"tr_int_start_{i}"
             )
         with c2:
             e_str = st.text_input(
                 f"Fin intervalle {i+1}",
                 value=f"{int(end_s//60)}:{int(end_s%60):02d}",
-                key=f"int_end_{i}"
+                key=f"tr_int_end_{i}"
             )
         with c3:
-            if st.button("🗑️", key=f"del_int_{i}"):
+            if st.button("🗑️", key=f"tr_del_int_{i}"):
                 st.session_state.training_intervals.pop(i)
                 st.rerun()
 
@@ -1040,73 +1043,109 @@ with tabs[1]:
         except:
             st.warning(f"⛔ Format invalide intervalle {i+1}")
 
-    if st.button("➕ Ajouter un intervalle"):
+    if st.button("➕ Ajouter un intervalle", key="tr_add_int"):
         st.session_state.training_intervals.append((0, 300))
         st.rerun()
 
-# ------- ANALYSE DES INTERVALLES -------
-st.markdown("## 🔍 Analyse des intervalles")
+    # ---------------------------------------------------------------
+    # 2) ANALYSE DES INTERVALLES
+    # ---------------------------------------------------------------
+    st.markdown("## 🔍 Analyse des intervalles")
 
-interval_segments = []
+    interval_segments = []
 
-for i, (s_sec, e_sec) in enumerate(st.session_state.training_intervals):
+    for i, (s_sec, e_sec) in enumerate(st.session_state.training_intervals):
 
-    seg = df[(df["time_s"] >= s_sec) & (df["time_s"] <= e_sec)]
-    if seg.empty:
-        continue
+        seg = df[(df["time_s"] >= s_sec) & (df["time_s"] <= e_sec)]
+        if seg.empty:
+            continue
 
-    interval_segments.append((i+1, seg, s_sec, e_sec))
+        interval_segments.append((i+1, seg, s_sec, e_sec))
 
-    stats, d_bpm, d_pct = analyze_heart_rate(seg)
-    dist_m = segment_distance_m(seg)
-    t_s = e_sec - s_sec
-    v_kmh = 3.6 * dist_m / t_s if t_s > 0 else 0
-    pace = format_pace_min_per_km(v_kmh)
-    pace_str = f"{pace[0]}:{pace[1]:02d} min/km" if pace else "–"
+        # --- FC ---
+        stats, d_bpm, d_pct = analyze_heart_rate(seg)
 
-    st.markdown(f"### Intervalle {i+1} ({s_sec:.0f}s → {e_sec:.0f}s)")
-    st.dataframe(pd.DataFrame({
-        "Métrique": ["FC moyenne", "Dérive bpm/min", "Dérive %/min",
-                     "Durée (s)", "Distance (m)", "Vitesse (km/h)", "Allure"],
-        "Valeur": [stats["FC moyenne (bpm)"], d_bpm, d_pct,
-                   t_s, round(dist_m, 1), round(v_kmh, 2), pace_str]
-    }), hide_index=True, use_container_width=True)
+        # --- Distance, vitesse, allure ---
+        dist_m = segment_distance_m(seg)
+        t_s = e_sec - s_sec
+        v_kmh = 3.6 * dist_m / t_s if t_s > 0 else 0
+        pace = format_pace_min_per_km(v_kmh)
+        pace_str = f"{pace[0]}:{pace[1]:02d} min/km" if pace else "–"
 
-    # >>>>> AJOUT FC vs ALLURE <<<<<
-    corr_fcpace, slope_fcpace, msg_fcpace = compare_fc_pace(seg)
+        # --- CINÉTIQUE VITESSE ---
+        d_v_kmh, d_v_pct = analyze_speed_kinetics(seg)  # ← tu l'as déjà dans ton code
 
-    with st.expander("📉 Relation FC ↗️ / Allure ↘️ (intervalle)"):
-        if corr_fcpace is None:
-            st.info(msg_fcpace)
-        else:
-            st.markdown(f"""
-            **Corrélation FC ↔️ Allure :** `{corr_fcpace:.3f}`  
-            **Pente FC = a·allure + b :** `{slope_fcpace:.2f}`  
+        # -------------------------
+        # TABLEAU
+        # -------------------------
+        st.markdown(f"### Intervalle {i+1} ({s_sec:.0f}s → {e_sec:.0f}s)")
 
-            🧠 **Interprétation :**  
-            {msg_fcpace}
-            """)
+        st.dataframe(pd.DataFrame({
+            "Métrique": [
+                "FC moyenne",
+                "Dérive FC (bpm/min)",
+                "Dérive FC (%/min)",
+                "Dérive vitesse (km/h/min)",
+                "Dérive vitesse (%/min)",
+                "Durée (s)",
+                "Distance (m)",
+                "Vitesse (km/h)",
+                "Allure"
+            ],
+            "Valeur": [
+                stats["FC moyenne (bpm)"],
+                d_bpm,
+                d_pct,
+                d_v_kmh,
+                d_v_pct,
+                t_s,
+                round(dist_m, 1),
+                round(v_kmh, 2),
+                pace_str
+            ]
+        }), hide_index=True, use_container_width=True)
 
-    # >>>>> FIN AJOUT <<<<<
+        # -------------------------------------------------------
+        # 3) FC ↔ ALlure (corrélation & pente)
+        # -------------------------------------------------------
+        corr_fcpace, slope_fcpace, msg_fcpace = compare_fc_pace(seg)
 
-    fig, ax = plt.subplots(figsize=(9, 4.2))
-    plot_multi_signals(
-        ax, seg, t0=s_sec, who=f"Int{i+1}",
-        show_fc=True,
-        show_pace=("speed_smooth" in seg.columns),
-        show_power=("power_smooth" in seg.columns)
-    )
-    ax.set_title(f"Cinétique — Intervalle {i+1}")
-    ax.grid(True, alpha=0.25)
-    st.pyplot(fig)
+        with st.expander("📉 Relation FC ↗️ / Allure ↘️ (intervalle)"):
+            if corr_fcpace is None:
+                st.info(msg_fcpace)
+            else:
+                st.markdown(f"""
+                **Corrélation FC ↔ Allure :** `{corr_fcpace:.3f}`  
+                **Pente FC = a·allure + b :** `{slope_fcpace:.2f}`  
 
-    # ------- GRAPHIQUE COMBINÉ -------
+                🧠 **Interprétation :**  
+                {msg_fcpace}
+                """)
+
+        # -------------------------
+        # 4) GRAPHIQUE SEGMENT
+        # -------------------------
+        fig, ax = plt.subplots(figsize=(9, 4.2))
+        plot_multi_signals(
+            ax, seg, t0=s_sec, who=f"Int{i+1}",
+            show_fc=True,
+            show_pace=("speed_smooth" in seg.columns),
+            show_power=("power_smooth" in seg.columns)
+        )
+        ax.set_title(f"Cinétique — Intervalle {i+1}")
+        ax.grid(True, alpha=0.25)
+        st.pyplot(fig)
+
+    # ---------------------------------------------------------------
+    # 5) GRAPHIQUE COMBINÉ (intervalles superposés)
+    # ---------------------------------------------------------------
     if interval_segments:
         st.markdown("## 📊 Graphique combiné — tous les intervalles superposés")
 
-        show_fc = st.checkbox("☑ FC", True, key="comb_fc_training")
-        show_pace = st.checkbox("☑ Allure", False, key="comb_pace_training")
-        show_power = st.checkbox("☑ Puissance", False, key="comb_pow_training")
+        # IMPORTANT : clés uniques à l’onglet 2
+        show_fc = st.checkbox("☑ FC", True, key="comb_fc_training_v2")
+        show_pace = st.checkbox("☑ Allure", False, key="comb_pace_training_v2")
+        show_power = st.checkbox("☑ Puissance", False, key="comb_pow_training_v2")
 
         figC, axC = plt.subplots(figsize=(10, 4.8))
 
