@@ -1120,22 +1120,6 @@ with tabs[1]:
             ]
         }), hide_index=True, use_container_width=True)
 
-        # -------------------------------------------------------
-        # 3) FC ↔ ALlure (corrélation & pente)
-        # -------------------------------------------------------
-        corr_fcpace, slope_fcpace, msg_fcpace = compare_fc_pace(seg)
-        with st.expander("📉 Relation FC ↗️ / Allure ↘️ (intervalle)"):
-            if corr_fcpace is None:
-                st.info(msg_fcpace)
-            else:
-                st.markdown(f"""
-                **Corrélation FC ↔ Allure :** `{corr_fcpace:.3f}`  
-                **Pente FC = a·allure + b :** `{slope_fcpace:.2f}`  
-
-                🧠 **Interprétation :**  
-                {msg_fcpace}
-                """)
-
         # -------------------------
         # 4) GRAPHIQUE SEGMENT
         # -------------------------
