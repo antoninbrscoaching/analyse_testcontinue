@@ -337,6 +337,23 @@ def compare_fc_pace(df):
 
     return float(corr), float(slope), msg
 
+# ========================= CINÉTIQUE VITESSE =========================
+def analyze_speed_kinetics(df):
+    """
+    Retourne la dérive de vitesse en km/h/min et en %/min
+    df doit contenir 'speed_smooth' ou 'enhanced_speed'.
+    """
+    sp_col = get_speed_col(df)
+    if sp_col is None or df[sp_col].dropna().empty:
+        return None, None
+
+    slope, _, _, _, _ = linregress(df["time_s"], df[sp_col])
+    drift_per_min = slope * 60
+    mean_speed = df[sp_col].mean()
+    drift_percent = (drift_per_min / mean_speed * 100) if mean_speed > 0 else None
+
+    return round(drift_per_min, 4), round(drift_percent, 4) if drift_percent is not None else None
+
 # ========================= INDEX CINÉTIQUE ==============================
 
 def compute_index_cinetique(drift_short_pct, drift_long_pct, drift_short_bpm, drift_long_bpm):
@@ -1055,7 +1072,6 @@ with tabs[1]:
     interval_segments = []
 
     for i, (s_sec, e_sec) in enumerate(st.session_state.training_intervals):
-
         seg = df[(df["time_s"] >= s_sec) & (df["time_s"] <= e_sec)]
         if seg.empty:
             continue
@@ -1073,13 +1089,12 @@ with tabs[1]:
         pace_str = f"{pace[0]}:{pace[1]:02d} min/km" if pace else "–"
 
         # --- CINÉTIQUE VITESSE ---
-        d_v_kmh, d_v_pct = analyze_speed_kinetics(seg)  # ← tu l'as déjà dans ton code
+        d_v_kmh, d_v_pct = analyze_speed_kinetics(seg)
 
         # -------------------------
         # TABLEAU
         # -------------------------
         st.markdown(f"### Intervalle {i+1} ({s_sec:.0f}s → {e_sec:.0f}s)")
-
         st.dataframe(pd.DataFrame({
             "Métrique": [
                 "FC moyenne",
@@ -1109,7 +1124,6 @@ with tabs[1]:
         # 3) FC ↔ ALlure (corrélation & pente)
         # -------------------------------------------------------
         corr_fcpace, slope_fcpace, msg_fcpace = compare_fc_pace(seg)
-
         with st.expander("📉 Relation FC ↗️ / Allure ↘️ (intervalle)"):
             if corr_fcpace is None:
                 st.info(msg_fcpace)
@@ -1141,14 +1155,11 @@ with tabs[1]:
     # ---------------------------------------------------------------
     if interval_segments:
         st.markdown("## 📊 Graphique combiné — tous les intervalles superposés")
-
-        # IMPORTANT : clés uniques à l’onglet 2
         show_fc = st.checkbox("☑ FC", True, key="comb_fc_training_v2")
         show_pace = st.checkbox("☑ Allure", False, key="comb_pace_training_v2")
         show_power = st.checkbox("☑ Puissance", False, key="comb_pow_training_v2")
 
         figC, axC = plt.subplots(figsize=(10, 4.8))
-
         for idx, seg, s0, s1 in interval_segments:
             plot_multi_signals(
                 axC, seg, t0=s0,
