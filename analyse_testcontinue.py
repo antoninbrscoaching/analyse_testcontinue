@@ -601,6 +601,7 @@ with tabs[0]:
                     st.markdown("</div>", unsafe_allow_html=True)
                     continue
 
+                # ---- ANALYSE FC ----
                 stats, drift_bpm, drift_pct = analyze_heart_rate(segment)
                 dist_m = segment_distance_m(segment)
                 t_s = float(end_sec - start_sec)
@@ -612,17 +613,22 @@ with tabs[0]:
                 else:
                     pace_str = "–"
 
+                # ---- CINÉTIQUE VITESSE ----
+                d_v_kmh, d_v_pct = analyze_speed_kinetics(segment)
+
                 df_table = pd.DataFrame({
                     "Métrique": [
                         "FC moyenne (bpm)", "FC max (bpm)",
-                        "Dérive (bpm/min)", "Dérive (%/min)",
+                        "Dérive FC (bpm/min)", "Dérive FC (%/min)",
+                        "Dérive vitesse (km/h/min)", "Dérive vitesse (%/min)",
                         "Durée segment (s)", "Distance (m)",
                         "Vitesse (km/h)", "Allure (min/km)"
                     ],
                     "Valeur": [
                         stats["FC moyenne (bpm)"], stats["FC max (bpm)"],
-                        stats["Dérive (bpm/min)"], stats["Dérive (%/min)"],
-                        stats["Durée segment (s)"], round(dist_m, 1),
+                        drift_bpm, drift_pct,
+                        d_v_kmh, d_v_pct,
+                        t_s, round(dist_m, 1),
                         round(v_kmh, 2), pace_str
                     ]
                 })
@@ -658,6 +664,8 @@ with tabs[0]:
                     "stats": stats,
                     "drift_bpm": drift_bpm,
                     "drift_pct": drift_pct,
+                    "d_v_kmh": d_v_kmh,
+                    "d_v_pct": d_v_pct,
                     "dist_m": dist_m,
                     "t_s": t_s,
                     "v_kmh": v_kmh,
@@ -669,7 +677,7 @@ with tabs[0]:
 
         if idx % 2 == 1 and idx < len(indices) - 1:
             cols = st.columns(2)
-
+  
     # ============================================================
     # =============== GRAPHIQUE COMBINÉ DES TESTS =================
     # ============================================================
