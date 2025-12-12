@@ -1225,6 +1225,198 @@ with tabs[0]:
 
     st.markdown("</div>", unsafe_allow_html=True)
 
+    # ===================== POWER LAW (fit) + TABLEAU MAINTIEN ======================
+
+def fit_power_law_from_tests(valid_tests, use_ideal=False):
+    """
+    Fit Power Law : T = A * V^{-k}
+    - V en m/s
+    - T en s
+    Retourne (A, k) ou (None, None)
+    """
+    try:
+        if len(valid_tests) < 2:
+            return None, None
+
+        if use_ideal:
+            V = np.array([t["dist_m"] / t["t_s_ideal"] for t in valid_tests if t.get("t_s_ideal") and t["t_s_ideal"] > 0], dtype=float)
+            TT = np.array([t["t_s_ideal"] for t in valid_tests if t.get("t_s_ideal") and t["t_s_ideal"] > 0], dtype=float)
+        else:
+            V = np.array([t["dist_m"] / t["t_s_raw"] for t in valid_tests if t.get("t_s_raw") and t["t_s_raw"] > 0], dtype=float)
+            TT = np.array([t["t_s_raw"] for t in valid_tests if t.get("t_s_raw") and t["t_s_raw"] > 0], dtype=float)
+
+        mask = np.isfinite(V) & np.isfinite(TT) & (V > 0) & (TT > 0)
+        V = V[mask]
+        TT = TT[mask]
+        if len(V) < 2:
+            return None, None
+
+        X = np.log(V)
+        Y = np.log(TT)
+
+        slope_pl, intercept_pl = np.polyfit(X, Y, 1)
+        k = float(-slope_pl)
+        A = float(np.exp(intercept_pl))
+
+        if not (math.isfinite(A) and math.isfinite(k) and A > 0 and k > 0):
+            return None, None
+
+        return A, k
+    except Exception:
+        return None, None
+
+
+def build_hybrid_holding_table(VC_kmh, D_prime_m, A_pl, k_pl,
+                              pct_low=80, pct_high=130, step=2):
+    """
+    Construit le tableau hybride :
+      - <100% => Power Law
+      - >100% => D'
+    Retourne un DataFrame prêt à afficher.
+    """
+    if VC_kmh is None or not math.isfinite(VC_kmh) or VC_kmh <= 0:
+        return None
+
+    VC_ms = VC_kmh / 3.6
+    rows = []
+
+    # sous-VC (Power Law)
+    if A_pl is not None and k_pl is not None:
+        for p in range(pct_low, 100, step):
+            v_kmh = VC_kmh * (p / 100.0)
+            v_ms = v_kmh / 3.6
+            if v_ms <= 0:
+                continue
+
+            Tlim = A_pl * (v_ms ** (-k_pl))
+            if not (math.isfinite(Tlim) and Tlim > 0):
+                continue
+
+            pace = format_pace_min_per_km(v_kmh)
+            pace_str = f"{pace[0]}:{pace[1]:02d} min/km" if pace else "–"
+
+            rows.append({
+                "% VC": f"{p}%",
+                "Modèle": "Power Law",
+                "Vitesse (km/h)": round(v_kmh, 2),
+                "Allure": pace_str,
+                "Temps limite": seconds_to_hms(Tlim),
+            })
+
+    # au-dessus de VC (D′)
+    if D_prime_m is not None and math.isfinite(D_prime_m) and D_prime_m > 0:
+        for p in range(102, pct_high + 1, step):
+            v_kmh = VC_kmh * (p / 100.0)
+            v_ms = v_kmh / 3.6
+
+            denom = v_ms - VC_ms
+            if denom <= 0:
+                continue
+
+            Tlim = D_prime_m / denom
+            if not (math.isfinite(Tlim) and Tlim > 0):
+                continue
+
+            pace = format_pace_min_per_km(v_kmh)
+            pace_str = f"{pace[0]}:{pace[1]:02d} min/km" if pace else "–"
+
+            rows.append({
+                "% VC": f"{p}%",
+                "Modèle": "D′",
+                "Vitesse (km/h)": round(v_kmh, 2),
+                "Allure": pace_str,
+                "Temps limite": seconds_to_hms(Tlim),
+            })
+
+    if not rows:
+        return None
+
+    dfp = pd.DataFrame(rows)
+
+    # tri logique : %VC croissant
+    def _pct_to_int(s):
+        try:
+            return int(str(s).replace("%", "").strip())
+        except Exception:
+            return 9999
+
+    dfp["_pct"] = dfp["% VC"].apply(_pct_to_int)
+    dfp = dfp.sort_values(["_pct", "Modèle"]).drop(columns=["_pct"]).reset_index(drop=True)
+    return dfp
+
+    # ============================================================
+# ======= TABLEAU TEMPS DE MAINTIEN (%VC) HYBRIDE ============
+#   < 100% : Power Law
+#   > 100% : D′
+#   2 parties : BRUT + RECALIBRÉ
+# ============================================================
+st.markdown('<div class="report-card">', unsafe_allow_html=True)
+st.subheader("📊 Temps de maintien par %VC — Hybride (Power Law <100% / D′ >100%)")
+
+# Fit Power Law sur les mêmes tests valides que VC
+A_raw, k_raw = (None, None)
+A_ideal, k_ideal = (None, None)
+
+if len(valid_tests_raw) >= 2:
+    A_raw, k_raw = fit_power_law_from_tests(valid_tests_raw, use_ideal=False)
+
+if len(valid_tests_ideal) >= 2:
+    A_ideal, k_ideal = fit_power_law_from_tests(valid_tests_ideal, use_ideal=True)
+
+colT1, colT2 = st.columns(2)
+
+with colT1:
+    st.markdown("### 🟦 VC brute")
+    if VC_kmh_raw is None or VC_kmh_raw <= 0:
+        st.info("VC brute indisponible → pas de tableau.")
+    else:
+        if A_raw is None or k_raw is None:
+            st.warning("Power Law brut non ajustable (A/k indisponibles) → seule la partie D′ (>100%) sera affichée si D′ existe.")
+        df_hold_raw = build_hybrid_holding_table(
+            VC_kmh=VC_kmh_raw,
+            D_prime_m=D_prime_raw,
+            A_pl=A_raw,
+            k_pl=k_raw,
+            pct_low=80, pct_high=130, step=2
+        )
+        if df_hold_raw is None:
+            st.info("Aucune ligne exploitable (paramètres invalides).")
+        else:
+            st.dataframe(df_hold_raw, hide_index=True, use_container_width=True)
+
+        # petit rappel paramètres
+        if A_raw is not None and k_raw is not None:
+            st.caption(f"Power Law brut : A={A_raw:.2f}, k={k_raw:.3f}")
+        if D_prime_raw is not None:
+            st.caption(f"D′ brut : {D_prime_raw:.1f} m")
+
+with colT2:
+    st.markdown("### 🟧 VC recalibrée (conditions idéales)")
+    if VC_kmh_ideal is None or VC_kmh_ideal <= 0:
+        st.info("VC recalibrée indisponible → pas de tableau.")
+    else:
+        if A_ideal is None or k_ideal is None:
+            st.warning("Power Law recalibré non ajustable (A/k indisponibles) → seule la partie D′ (>100%) sera affichée si D′ existe.")
+        df_hold_ideal = build_hybrid_holding_table(
+            VC_kmh=VC_kmh_ideal,
+            D_prime_m=D_prime_ideal,
+            A_pl=A_ideal,
+            k_pl=k_ideal,
+            pct_low=80, pct_high=130, step=2
+        )
+        if df_hold_ideal is None:
+            st.info("Aucune ligne exploitable (paramètres invalides).")
+        else:
+            st.dataframe(df_hold_ideal, hide_index=True, use_container_width=True)
+
+        # petit rappel paramètres
+        if A_ideal is not None and k_ideal is not None:
+            st.caption(f"Power Law recalibré : A={A_ideal:.2f}, k={k_ideal:.3f}")
+        if D_prime_ideal is not None:
+            st.caption(f"D′ recalibré : {D_prime_ideal:.1f} m")
+
+st.markdown("</div>", unsafe_allow_html=True)
+
     # ============================================================
     # ====================== INDEX CINÉTIQUE ======================
     # ============================================================
