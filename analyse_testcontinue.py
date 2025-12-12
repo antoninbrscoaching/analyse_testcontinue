@@ -1,3 +1,9 @@
+# ============================================================
+# BLOC 1/5 — IMPORTS + CONFIG/THEME + METEO + LECTURE FICHIERS
+# + OUTILS TEMPS
+# (Copie ce bloc en premier, puis attends BLOC 2/5)
+# ============================================================
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -150,7 +156,6 @@ def load_activity(file):
             raise ValueError(f"Erreur FIT : {e}")
 
         # Harmonisation FIT (GPS + alt + distance)
-        # GPS: position_lat/position_long (semicircles)
         if "position_lat" in df.columns and "lat" not in df.columns:
             df["lat"] = df["position_lat"].apply(_fit_semicircles_to_deg)
         if "position_long" in df.columns and "lon" not in df.columns:
@@ -324,6 +329,11 @@ def seconds_to_hms(seconds: float) -> str:
 def hms_from_seconds_for_inputs(seconds: float) -> str:
     return seconds_to_hms(seconds)
 
+# ============================================================
+# BLOC 2/5 — OUTILS CALCUL + DISTANCES + SEGMENTS + ALLURE
+# + LISSAGE CARDIO
+# (Copie ce bloc APRÈS le BLOC 1, puis attends BLOC 3/5)
+# ============================================================
 
 # ========================= OUTILS CALCUL ==============================
 def get_speed_col(df):
@@ -356,15 +366,11 @@ def distance_3d_m(lat1, lon1, alt1, lat2, lon2, alt2):
 
 
 def segment_distance_m(df_seg):
-    """Distance segment la plus réaliste possible :
-    1) distance cumulée si dispo et monotone
-    2) GPS 3D si dispo
-    3) speed*dt si dispo
-    """
+    """Distance segment la plus réaliste possible."""
     if df_seg is None or df_seg.empty or len(df_seg) < 2:
         return 0.0
 
-    # 1) distance cumulée dispo ?
+    # 1) distance cumulée
     if "distance" in df_seg.columns:
         d0 = df_seg["distance"].iloc[0]
         d1 = df_seg["distance"].iloc[-1]
@@ -372,14 +378,12 @@ def segment_distance_m(df_seg):
             try:
                 d0 = float(d0)
                 d1 = float(d1)
-                if math.isfinite(d0) and math.isfinite(d1) and d1 >= d0:
-                    # filtre: évite les "distance" en km par erreur
-                    if (d1 - d0) < 1e7:
-                        return float(d1 - d0)
+                if math.isfinite(d0) and math.isfinite(d1) and d1 >= d0 and (d1 - d0) < 1e7:
+                    return float(d1 - d0)
             except Exception:
                 pass
 
-    # 2) GPS 3D si dispo
+    # 2) GPS 3D
     if "lat" in df_seg.columns and "lon" in df_seg.columns:
         lat = pd.to_numeric(df_seg["lat"], errors="coerce").values
         lon = pd.to_numeric(df_seg["lon"], errors="coerce").values
@@ -399,8 +403,7 @@ def segment_distance_m(df_seg):
     sp = get_speed_col(df_seg)
     if sp is not None and "delta_t" in df_seg.columns:
         try:
-            dist = float(np.nansum(df_seg[sp].fillna(0).values * df_seg["delta_t"].fillna(0).values))
-            return float(max(0.0, dist))
+            return float(np.nansum(df_seg[sp].fillna(0).values * df_seg["delta_t"].fillna(0).values))
         except Exception:
             return 0.0
 
@@ -408,7 +411,7 @@ def segment_distance_m(df_seg):
 
 
 def segment_elevation_up_down(df_seg):
-    """D+ / D- (m) sur le segment, robuste (lissage médian)."""
+    """D+ / D- (m) robuste."""
     if df_seg is None or df_seg.empty or "alt" not in df_seg.columns:
         return 0.0, 0.0
 
@@ -419,29 +422,20 @@ def segment_elevation_up_down(df_seg):
     d = alt.diff().fillna(0.0)
     dup = float(d[d > 0].sum())
     ddn = float(-d[d < 0].sum())
-    if not math.isfinite(dup):
-        dup = 0.0
-    if not math.isfinite(ddn):
-        ddn = 0.0
     return max(0.0, dup), max(0.0, ddn)
 
 
 def segment_grade_percent_net(df_seg):
-    """Pente moyenne nette (%) = 100 * (alt_fin - alt_deb) / distance_horiz_approx."""
     if df_seg is None or df_seg.empty or "alt" not in df_seg.columns:
         return None
     dist_m = segment_distance_m(df_seg)
     if dist_m <= 0:
         return None
-    alt = pd.to_numeric(df_seg["alt"], errors="coerce").astype(float)
-    alt = alt.replace([np.inf, -np.inf], np.nan).dropna()
+    alt = pd.to_numeric(df_seg["alt"], errors="coerce").dropna()
     if len(alt) < 2:
         return None
-    deniv = float(alt.iloc[-1] - alt.iloc[0])
-    grade = 100.0 * deniv / dist_m
-    if not math.isfinite(grade):
-        return None
-    return float(grade)
+    grade = 100.0 * float(alt.iloc[-1] - alt.iloc[0]) / dist_m
+    return grade if math.isfinite(grade) else None
 
 
 def format_pace_min_per_km(v_kmh):
@@ -452,7 +446,7 @@ def format_pace_min_per_km(v_kmh):
     return total_seconds // 60, total_seconds % 60, min_per_km
 
 
-# ========================= Lissage Cardio ==============================
+# ========================= LISSAGE CARDIO ==============================
 def smooth_hr(df, time_col="timestamp", hr_col="heart_rate"):
     df = df.copy().sort_values(by=time_col).reset_index(drop=True)
     df[time_col] = pd.to_datetime(df[time_col], errors="coerce")
@@ -462,7 +456,6 @@ def smooth_hr(df, time_col="timestamp", hr_col="heart_rate"):
     median_step = np.median(df["delta_t"][df["delta_t"] > 0])
     if np.isnan(median_step) or median_step == 0:
         median_step = 1
-    # clamp des gros trous (pause)
     df.loc[df["delta_t"] > 2 * median_step, "delta_t"] = median_step
 
     df["time_s"] = df["delta_t"].cumsum()
@@ -476,8 +469,6 @@ def smooth_hr(df, time_col="timestamp", hr_col="heart_rate"):
         window_sec = 20
 
     step = np.median(np.diff(df["time_s"])) if len(df) > 2 else 1
-    if step <= 0 or np.isnan(step):
-        step = 1
     window_size = max(1, int(window_sec / step))
 
     df["hr_smooth"] = pd.to_numeric(df[hr_col], errors="coerce").rolling(window_size, min_periods=1).mean()
@@ -491,8 +482,13 @@ def smooth_hr(df, time_col="timestamp", hr_col="heart_rate"):
     pauses = int((df["delta_t"] > 2 * median_step).sum())
     return df, window_sec, total_dur, pauses
 
+# ============================================================
+# BLOC 3/5 — ANALYSES FC + CINÉTIQUE VITESSE + GRAPHIQUES
+# + OUTILS PDF
+# (Copie ce bloc APRÈS le BLOC 2, puis attends BLOC 4/5)
+# ============================================================
 
-# ========================= Analyse FC ==============================
+# ========================= ANALYSE FC ==============================
 def analyze_heart_rate(df):
     hr = df["hr_smooth"].dropna()
     mean_hr = float(hr.mean()) if len(hr) else np.nan
@@ -503,6 +499,7 @@ def analyze_heart_rate(df):
         slope, _, _, _, _ = linregress(df["time_s"], df["hr_smooth"])
     else:
         slope = 0.0
+
     drift_per_min = float(slope * 60)
     drift_percent = (drift_per_min / mean_hr) * 100 if mean_hr and mean_hr > 0 else np.nan
 
@@ -517,7 +514,7 @@ def analyze_heart_rate(df):
     return stats, float(drift_per_min), (None if np.isnan(drift_percent) else float(drift_percent))
 
 
-# ========================= Cinétique vitesse =========================
+# ========================= CINÉTIQUE VITESSE =========================
 def analyze_speed_kinetics(df):
     sp_col = get_speed_col(df)
     if sp_col is None or df[sp_col].dropna().empty or df["time_s"].nunique() < 2:
@@ -531,7 +528,7 @@ def analyze_speed_kinetics(df):
     return round(drift_per_min, 4), (round(drift_percent, 4) if drift_percent is not None else None)
 
 
-# ========================= PDF =========================
+# ========================= OUTILS PDF =========================
 def fig_to_pdf_bytes(figs):
     if not isinstance(figs, (list, tuple)):
         figs = [figs]
@@ -544,177 +541,7 @@ def fig_to_pdf_bytes(figs):
     return buf
 
 
-# ========================= METEO sur un segment =========================
-def segment_lat_lon(df_seg):
-    if df_seg is None or df_seg.empty:
-        return None, None
-    if "lat" not in df_seg.columns or "lon" not in df_seg.columns:
-        return None, None
-    sub = df_seg[["lat", "lon"]].dropna()
-    if sub.empty:
-        return None, None
-    # on prend le point médian (plus stable que tout début)
-    mid = sub.iloc[len(sub) // 2]
-    lat = float(mid["lat"])
-    lon = float(mid["lon"])
-    if not (math.isfinite(lat) and math.isfinite(lon)):
-        return None, None
-    # garde-fou coordonnées
-    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
-        return None, None
-    return lat, lon
-
-
-def segment_start_end_dt(df_seg):
-    if df_seg is None or df_seg.empty or "timestamp" not in df_seg.columns:
-        return None, None
-    t = df_seg["timestamp"].dropna()
-    if t.empty:
-        return None, None
-    start_dt = t.iloc[0]
-    end_dt = t.iloc[-1]
-    if not isinstance(start_dt, datetime) or not isinstance(end_dt, datetime):
-        return None, None
-    return start_dt, end_dt
-
-
-def get_segment_weather(df_seg):
-    lat, lon = segment_lat_lon(df_seg)
-    start_dt, end_dt = segment_start_end_dt(df_seg)
-    if lat is None or lon is None or start_dt is None or end_dt is None:
-        return None, None, None
-    return get_avg_weather_for_period(lat, lon, start_dt, end_dt)
-
-
-# ========================= Recalibrage "code2" (non-linéaire) =========================
-def temp_multiplier_nonlin(temp, opt_temp=12.0, k_hot=0.002, k_cold=0.002):
-    """
-    Même logique que ton code 2 :
-    - si temp > opt => 1 + k_hot*(temp-opt)
-    - si temp < opt => 1 + k_cold*(opt-temp)
-    """
-    try:
-        if temp is None:
-            return 1.0
-        diff = float(temp) - float(opt_temp)
-        if diff > 0:
-            mult = 1.0 + float(k_hot) * diff
-        else:
-            mult = 1.0 + float(k_cold) * (-diff)
-        return max(0.1, float(mult))
-    except Exception:
-        return 1.0
-
-
-def elevation_factor_from_dup_ddn(D_up, D_down, segment_length_m=1000.0, k_up=1.040, k_down=0.996):
-    """
-    Même esprit que ton code 2 :
-      factor = 1 + (k_up-1)*(D_up/seg_len) + (1-k_down)*(D_down/seg_len)
-    """
-    try:
-        seg_len = float(segment_length_m) if segment_length_m and segment_length_m > 0 else 1000.0
-        up_factor = (float(k_up) - 1.0) * (float(D_up) / seg_len)
-        down_factor = (1.0 - float(k_down)) * (float(D_down) / seg_len)
-        factor = 1.0 + up_factor + down_factor
-        return max(0.01, float(factor))
-    except Exception:
-        return 1.0
-
-
-def recalibrate_time_to_ideal(
-    time_seconds_raw,
-    D_up,
-    D_down,
-    distance_m,
-    temp_real,
-    k_up=1.040,
-    k_down=0.996,
-    k_temp_hot=0.002,
-    k_temp_cold=0.002,
-    opt_temp=12.0,
-):
-    """
-    Convertit un temps réel -> temps recalibré (conditions idéales)
-      - retire effet D+/D-
-      - retire effet température réelle
-    """
-    try:
-        t = float(time_seconds_raw)
-        if not math.isfinite(t) or t <= 0:
-            return None
-
-        dist = float(distance_m) if distance_m and distance_m > 0 else 1000.0
-
-        fact_elev = elevation_factor_from_dup_ddn(D_up, D_down, segment_length_m=dist, k_up=k_up, k_down=k_down)
-        t_no_elev = t / fact_elev
-
-        mult_real = temp_multiplier_nonlin(temp_real, opt_temp=opt_temp, k_hot=k_temp_hot, k_cold=k_temp_cold)
-        t_no_temp = t_no_elev / (mult_real if mult_real != 0 else 1.0)
-
-        return max(0.0, float(t_no_temp))
-    except Exception:
-        return None
-
-
-# ========================= INDEX CINÉTIQUE ==============================
-def compute_index_cinetique(drift_short_pct, drift_long_pct, drift_short_bpm, drift_long_bpm):
-    use_pct = drift_short_pct is not None and drift_long_pct is not None and drift_short_pct != 0
-    if use_pct:
-        IC = 1.0 - (drift_long_pct / drift_short_pct)
-        unite = "%/min"
-    else:
-        if drift_short_bpm is None or drift_long_bpm is None or drift_short_bpm == 0:
-            return None, None, "Index non calculable (dérives indisponibles).", None, None
-        IC = 1.0 - (drift_long_bpm / drift_short_bpm)
-        unite = "bpm/min"
-
-    if IC >= 0.70:
-        titre = "Très bonne stabilité sur le long"
-        msg = "IC élevé : blocs longs & tempos ambitieux."
-        seances = [
-            "2–3×(8–12′) à 88–92% VC, r=2–3′",
-            "Tempo 20–30′ à 85–90% VC",
-            "Progressif 30–40′ de 80→90% VC",
-            "Z2 volumineux",
-        ]
-    elif 0.40 <= IC < 0.70:
-        titre = "Bon équilibre, marge en soutien aérobie"
-        msg = "IC bon : mix intervals moyens + tempo."
-        seances = [
-            "4–6×5′ à 90–92% VC, r=1–2′",
-            "2×12–15′ à 85–90% VC",
-            "6–8×(2′ @95% VC / 1′ @80%)",
-        ]
-    elif 0.15 <= IC < 0.40:
-        titre = "Stabilité limitée sur le long"
-        msg = "IC moyen : allonger progressivement les intervalles."
-        seances = [
-            "3–4×6′ à 88–90% VC",
-            "3×8–10′ à 85–88% VC",
-            "Z2 + 6–10×20″ strides",
-        ]
-    elif 0.00 <= IC < 0.15:
-        titre = "Dérives longue et courte similaires"
-        msg = "IC faible : base + tempo doux, peu de >92% VC."
-        seances = [
-            "Z2 majoritaire",
-            "3–4×6–8′ à 82–86% VC",
-            "10–12×1′ à 92–95% VC / 1′ Z2",
-        ]
-    else:
-        titre = "Stabilité faible / contexte défavorable"
-        msg = "IC négatif : re-baser et diagnostiquer (fatigue/conditions)."
-        seances = [
-            "Z2 + force (côtes)",
-            "Progressifs doux",
-            "Limiter >90% VC ; vérifier récupération",
-        ]
-
-    reco = {"titre": titre, "seances": seances}
-    return float(IC), unite, msg, None, reco
-
-
-# ========================= AIDES GRAPHIQUES ==============================
+# ========================= AIDES GRAPHIQUES =========================
 def pace_formatter(v, pos):
     if v is None or not math.isfinite(v) or v <= 0:
         return ""
@@ -753,7 +580,9 @@ def compute_pace_series_from_speed(df):
     return pace_min_per_km
 
 
-def plot_multi_signals(ax, df, t0=0.0, who="T1", show_fc=True, show_pace=False, show_power=False, linewidth=1.8):
+def plot_multi_signals(ax, df, t0=0.0, who="T1",
+                       show_fc=True, show_pace=False, show_power=False,
+                       linewidth=1.8):
     if who.startswith("T1"):
         c_fc, c_pace, c_pow = COLOR_RED_T1, COLOR_BLUE_T1, COLOR_ORANGE_T1
     elif who.startswith("T2"):
@@ -773,23 +602,122 @@ def plot_multi_signals(ax, df, t0=0.0, who="T1", show_fc=True, show_pace=False, 
         pace_series = compute_pace_series_from_speed(df)
         if pace_series is not None:
             ax_pace = add_pace_axis(ax)
-            ax_pace.plot(tt, pace_series, color=c_pace, linewidth=linewidth, label=f"{who} • Allure (min/km)")
+            ax_pace.plot(tt, pace_series, color=c_pace, linewidth=linewidth,
+                         label=f"{who} • Allure (min/km)")
 
     if show_power and "power_smooth" in df.columns:
         ax_pow = add_power_axis(ax, offset=60)
-        ax_pow.plot(tt, df["power_smooth"], color=c_pow, linewidth=linewidth, label=f"{who} • Puissance (W)")
+        ax_pow.plot(tt, df["power_smooth"], color=c_pow, linewidth=linewidth,
+                    label=f"{who} • Puissance (W)")
 
     return ax, ax_pace, ax_pow
 
+# ============================================================
+# BLOC 4/5 — RECALIBRAGE + INDEX CINÉTIQUE
+# + TABLES STYLÉES
+# + POWER LAW + TABLEAU %VC (FONCTIONS UNIQUEMENT)
+# (Copie ce bloc APRÈS le BLOC 3, puis attends BLOC 5/5)
+# ============================================================
 
-# ========================= TABLEAUX (3 BLOCS COULEUR) =========================
+# ========================= RECALIBRAGE =========================
+def temp_multiplier_nonlin(temp, opt_temp=12.0, k_hot=0.002, k_cold=0.002):
+    try:
+        if temp is None:
+            return 1.0
+        diff = float(temp) - float(opt_temp)
+        if diff > 0:
+            mult = 1.0 + float(k_hot) * diff
+        else:
+            mult = 1.0 + float(k_cold) * (-diff)
+        return max(0.1, float(mult))
+    except Exception:
+        return 1.0
+
+
+def elevation_factor_from_dup_ddn(D_up, D_down, segment_length_m=1000.0,
+                                 k_up=1.040, k_down=0.996):
+    try:
+        seg_len = float(segment_length_m) if segment_length_m and segment_length_m > 0 else 1000.0
+        up_factor = (float(k_up) - 1.0) * (float(D_up) / seg_len)
+        down_factor = (1.0 - float(k_down)) * (float(D_down) / seg_len)
+        factor = 1.0 + up_factor + down_factor
+        return max(0.01, float(factor))
+    except Exception:
+        return 1.0
+
+
+def recalibrate_time_to_ideal(time_seconds_raw, D_up, D_down, distance_m,
+                              temp_real,
+                              k_up=1.040, k_down=0.996,
+                              k_temp_hot=0.002, k_temp_cold=0.002,
+                              opt_temp=12.0):
+    try:
+        t = float(time_seconds_raw)
+        if not math.isfinite(t) or t <= 0:
+            return None
+
+        dist = float(distance_m) if distance_m and distance_m > 0 else 1000.0
+        fact_elev = elevation_factor_from_dup_ddn(
+            D_up, D_down, segment_length_m=dist,
+            k_up=k_up, k_down=k_down
+        )
+        t_no_elev = t / fact_elev
+
+        mult_real = temp_multiplier_nonlin(
+            temp_real, opt_temp=opt_temp,
+            k_hot=k_temp_hot, k_cold=k_temp_cold
+        )
+        t_no_temp = t_no_elev / (mult_real if mult_real != 0 else 1.0)
+        return max(0.0, float(t_no_temp))
+    except Exception:
+        return None
+
+
+# ========================= INDEX CINÉTIQUE =========================
+def compute_index_cinetique(drift_short_pct, drift_long_pct,
+                            drift_short_bpm, drift_long_bpm):
+    use_pct = (
+        drift_short_pct is not None
+        and drift_long_pct is not None
+        and drift_short_pct != 0
+    )
+
+    if use_pct:
+        IC = 1.0 - (drift_long_pct / drift_short_pct)
+        unite = "%/min"
+    else:
+        if drift_short_bpm is None or drift_long_bpm is None or drift_short_bpm == 0:
+            return None, None, "Index non calculable.", None, None
+        IC = 1.0 - (drift_long_bpm / drift_short_bpm)
+        unite = "bpm/min"
+
+    if IC >= 0.70:
+        titre = "Très bonne stabilité"
+        msg = "Excellente endurance."
+        seances = ["Tempo long", "Blocs soutenus", "Z2 volumineux"]
+    elif IC >= 0.40:
+        titre = "Bonne stabilité"
+        msg = "Bonne base aérobie."
+        seances = ["Intervalles moyens", "Tempo"]
+    elif IC >= 0.15:
+        titre = "Stabilité moyenne"
+        msg = "À renforcer."
+        seances = ["Progressifs", "Z2 + tempo"]
+    else:
+        titre = "Stabilité faible"
+        msg = "Reconstruction aérobie."
+        seances = ["Z2 majoritaire", "Côtes faciles"]
+
+    return float(IC), unite, msg, None, {"titre": titre, "seances": seances}
+
+
+# ========================= TABLES STYLÉES =========================
 def _hex_to_rgb(hex_color):
     h = hex_color.lstrip("#")
-    return tuple(int(h[i : i + 2], 16) for i in (0, 2, 4))
+    return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
 
 
 def _blend(hex_color, mix_with="#ffffff", alpha=0.75):
-    """alpha proche de 1 => très proche de hex_color ; proche de 0 => très proche de blanc."""
     r1, g1, b1 = _hex_to_rgb(hex_color)
     r2, g2, b2 = _hex_to_rgb(mix_with)
     r = int(alpha * r1 + (1 - alpha) * r2)
@@ -799,58 +727,94 @@ def _blend(hex_color, mix_with="#ffffff", alpha=0.75):
 
 
 def style_metrics_table(df_table: pd.DataFrame):
-    """Colorie les lignes en 3 familles: FC / Réel / Recalibré."""
-    fc_keys = {
-        "FC moyenne (bpm)",
-        "FC max (bpm)",
-        "FC min (bpm)",
-        "Dérive FC (bpm/min)",
-        "Dérive FC (%/min)",
-    }
-
-    real_keys = {
-        "Durée segment réelle (s)",
-        "Durée réelle (s)",
-        "Distance (m)",
-        "Vitesse réelle (km/h)",
-        "Allure réelle (min/km)",
-        "Allure réelle",
-        "Pente nette moyenne (%)",
-        "D+ (m)",
-        "D- (m)",
-        "Température (°C)",
-        "Vent (m/s)",
-        "Humidité (%)",
-        "Dérive vitesse (km/h/min)",
-        "Dérive vitesse (%/min)",
-    }
-
-    recal_keys = {
-        "Durée segment recalibrée (s)",
-        "Durée recalibrée (s)",
-        "Vitesse recalibrée (km/h)",
-        "Allure recalibrée (conditions idéales) (min/km)",
-        "Allure recalibrée (conditions idéales)",
-    }
-
     fc_bg = _blend(COLOR_RED_T1, alpha=0.18)
     real_bg = _blend(COLOR_BLUE_T1, alpha=0.14)
     recal_bg = _blend(COLOR_ORANGE_T1, alpha=0.16)
 
     def row_style(row):
         m = str(row.get("Métrique", ""))
-        if m in fc_keys:
+        if "FC" in m:
             return [f"background-color: {fc_bg};"] * len(row)
-        if m in recal_keys:
+        if "recalibrée" in m:
             return [f"background-color: {recal_bg};"] * len(row)
-        if m in real_keys:
+        if "réelle" in m:
             return [f"background-color: {real_bg};"] * len(row)
         return [""] * len(row)
 
-    sty = df_table.style.apply(row_style, axis=1)
-    sty = sty.set_properties(**{"border": "0px"})
-    return sty
+    return df_table.style.apply(row_style, axis=1)
 
+
+# ========================= POWER LAW + %VC =========================
+def fit_power_law_from_tests(valid_tests, use_ideal=False):
+    try:
+        if len(valid_tests) < 2:
+            return None, None
+
+        if use_ideal:
+            V = np.array([t["dist_m"] / t["t_s_ideal"]
+                          for t in valid_tests if t.get("t_s_ideal") and t["t_s_ideal"] > 0])
+            T = np.array([t["t_s_ideal"]
+                          for t in valid_tests if t.get("t_s_ideal") and t["t_s_ideal"] > 0])
+        else:
+            V = np.array([t["dist_m"] / t["t_s_raw"]
+                          for t in valid_tests if t.get("t_s_raw") and t["t_s_raw"] > 0])
+            T = np.array([t["t_s_raw"]
+                          for t in valid_tests if t.get("t_s_raw") and t["t_s_raw"] > 0])
+
+        mask = np.isfinite(V) & np.isfinite(T) & (V > 0) & (T > 0)
+        if mask.sum() < 2:
+            return None, None
+
+        X = np.log(V[mask])
+        Y = np.log(T[mask])
+        slope, intercept = np.polyfit(X, Y, 1)
+
+        k = -float(slope)
+        A = float(np.exp(intercept))
+        if A > 0 and k > 0:
+            return A, k
+        return None, None
+    except Exception:
+        return None, None
+
+
+def build_hybrid_holding_table(VC_kmh, D_prime_m, A_pl, k_pl,
+                              pct_low=80, pct_high=130, step=2):
+    if VC_kmh is None or VC_kmh <= 0:
+        return None
+
+    VC_ms = VC_kmh / 3.6
+    rows = []
+
+    if A_pl and k_pl:
+        for p in range(pct_low, 100, step):
+            v = VC_kmh * p / 100
+            Tlim = A_pl * (v / 3.6) ** (-k_pl)
+            rows.append({
+                "% VC": f"{p}%",
+                "Modèle": "Power Law",
+                "Vitesse (km/h)": round(v, 2),
+                "Temps limite": seconds_to_hms(Tlim)
+            })
+
+    if D_prime_m and D_prime_m > 0:
+        for p in range(102, pct_high + 1, step):
+            v_ms = VC_kmh * p / 100 / 3.6
+            if v_ms > VC_ms:
+                Tlim = D_prime_m / (v_ms - VC_ms)
+                rows.append({
+                    "% VC": f"{p}%",
+                    "Modèle": "D′",
+                    "Vitesse (km/h)": round(v_ms * 3.6, 2),
+                    "Temps limite": seconds_to_hms(Tlim)
+                })
+
+    return pd.DataFrame(rows) if rows else None
+
+# ============================================================
+# BLOC 5/5 — APP PRINCIPALE COMPLÈTE (UI)
+# (Copie ce bloc APRÈS le BLOC 4)
+# ============================================================
 
 # ========================= APP PRINCIPALE ==============================
 st.title("🏃‍♂️ Analyse de Tests d'Endurance + Vitesse Critique (Export PDF)")
@@ -871,6 +835,15 @@ st.sidebar.caption(
     "Si pas de GPS/temps, la météo auto ne peut pas être calculée.\n"
     "Dans ce cas, tu peux forcer une température manuelle par test/intervalle."
 )
+
+def _pace_str_from_kmh(v_kmh):
+    try:
+        p = format_pace_min_per_km(v_kmh)
+        if not p:
+            return "–"
+        return f"{int(p[0])}:{int(p[1]):02d} min/km"
+    except Exception:
+        return "–"
 
 # ---------------------------------------------------------------------
 # ONGLET 1 : TESTS D’ENDURANCE
@@ -936,14 +909,13 @@ with tabs[0]:
                     continue
 
                 lag = st.slider(
-                    f"Correction du décalage capteur (s) — Test {i}", 0, 10, 0, key=f"lag_{i}"
+                    f"Correction du décalage capteur (s) — Test {i}",
+                    0, 10, 0, key=f"lag_{i}"
                 )
                 df["timestamp"] = df["timestamp"] - pd.to_timedelta(lag, unit="s")
 
                 df, window, total_dur, pauses = smooth_hr(df)
-                st.caption(
-                    f"Durée détectée : {total_dur:.1f}s • Lissage : {window}s • Pauses détectées : {pauses}"
-                )
+                st.caption(f"Durée détectée : {total_dur:.1f}s • Lissage : {window}s • Pauses détectées : {pauses}")
 
                 col_start, col_end = st.columns(2)
                 with col_start:
@@ -990,17 +962,15 @@ with tabs[0]:
                 avgT, avgW, avgH = get_segment_weather(segment)
                 temp_real = avgT if avgT is not None else (manual_temp if manual_temp != 0.0 else None)
 
-                # ---- RE-CALIBRAGE (conditions idéales) sur le TEMPS ----
+                # ---- RECALIBRAGE ----
                 t_s_ideal = recalibrate_time_to_ideal(
                     time_seconds_raw=t_s_raw,
                     D_up=D_up,
                     D_down=D_down,
-                    distance_m=dist_m if dist_m > 0 else 1000.0,
+                    distance_m=(dist_m if dist_m > 0 else 1000.0),
                     temp_real=temp_real,
-                    k_up=k_up,
-                    k_down=k_down,
-                    k_temp_hot=k_temp_hot,
-                    k_temp_cold=k_temp_cold,
+                    k_up=k_up, k_down=k_down,
+                    k_temp_hot=k_temp_hot, k_temp_cold=k_temp_cold,
                     opt_temp=opt_temp,
                 )
                 v_kmh_ideal = (
@@ -1010,11 +980,8 @@ with tabs[0]:
                 )
 
                 # ---- ALLURES ----
-                pace_raw = format_pace_min_per_km(v_kmh_raw)
-                pace_raw_str = f"{int(pace_raw[0])}:{int(pace_raw[1]):02d} min/km" if pace_raw else "–"
-
-                pace_ideal = format_pace_min_per_km(v_kmh_ideal) if v_kmh_ideal else None
-                pace_ideal_str = f"{int(pace_ideal[0])}:{int(pace_ideal[1]):02d} min/km" if pace_ideal else "–"
+                pace_raw_str = _pace_str_from_kmh(v_kmh_raw)
+                pace_ideal_str = _pace_str_from_kmh(v_kmh_ideal) if v_kmh_ideal else "–"
 
                 # ---- CINÉTIQUE VITESSE ----
                 d_v_kmh, d_v_pct = analyze_speed_kinetics(segment)
@@ -1045,9 +1012,9 @@ with tabs[0]:
                             "Humidité (%)",
                         ],
                         "Valeur": [
-                            stats["FC moyenne (bpm)"],
-                            stats["FC max (bpm)"],
-                            stats["FC min (bpm)"],
+                            stats.get("FC moyenne (bpm)"),
+                            stats.get("FC max (bpm)"),
+                            stats.get("FC min (bpm)"),
                             drift_bpm,
                             drift_pct,
                             d_v_kmh,
@@ -1068,7 +1035,6 @@ with tabs[0]:
                         ],
                     }
                 )
-
                 st.dataframe(style_metrics_table(df_table), hide_index=True, use_container_width=True)
 
                 # ---- GRAPHIQUE ----
@@ -1131,7 +1097,7 @@ with tabs[0]:
             cols = st.columns(2)
 
     # ============================================================
-    # =============== GRAPHIQUE COMBINÉ DES TESTS =================
+    # GRAPH COMBINÉ
     # ============================================================
     st.markdown('<div class="report-card">', unsafe_allow_html=True)
     st.subheader("📊 Graphique combiné — FC / Allure / Puissance")
@@ -1154,7 +1120,6 @@ with tabs[0]:
                 show_pace=show_c_pace and (get_speed_col(seg) is not None),
                 show_power=show_c_power and ("power_smooth" in seg.columns),
             )
-
         axC.set_xlabel("Temps segment (s)")
         axC.set_title("Superposition des cinétiques")
         axC.grid(True, alpha=0.15)
@@ -1172,15 +1137,14 @@ with tabs[0]:
     st.markdown("</div>", unsafe_allow_html=True)
 
     # ============================================================
-    # ===================== VITESSE CRITIQUE ======================
+    # VC
     # ============================================================
     st.markdown('<div class="report-card">', unsafe_allow_html=True)
     st.subheader("⚙️ Modèle Hyperbolique — Vitesse Critique (VC)")
 
-    valid_tests_raw = [t for t in tests_data if t["dist_m"] > 0 and t["t_s_raw"] and t["t_s_raw"] > 0]
-    valid_tests_ideal = [t for t in tests_data if t["dist_m"] > 0 and t["t_s_ideal"] and t["t_s_ideal"] > 0]
+    valid_tests_raw = [t for t in tests_data if t.get("dist_m", 0) > 0 and t.get("t_s_raw") and t["t_s_raw"] > 0]
+    valid_tests_ideal = [t for t in tests_data if t.get("dist_m", 0) > 0 and t.get("t_s_ideal") and t["t_s_ideal"] > 0]
 
-    # VC réelle (brute)
     if len(valid_tests_raw) >= 2:
         D = np.array([t["dist_m"] for t in valid_tests_raw], dtype=float)
         T = np.array([t["t_s_raw"] for t in valid_tests_raw], dtype=float)
@@ -1191,7 +1155,6 @@ with tabs[0]:
     else:
         VC_kmh_raw = None
 
-    # VC recalibrée (conditions idéales)
     if len(valid_tests_ideal) >= 2:
         D2 = np.array([t["dist_m"] for t in valid_tests_ideal], dtype=float)
         T2 = np.array([t["t_s_ideal"] for t in valid_tests_ideal], dtype=float)
@@ -1209,216 +1172,94 @@ with tabs[0]:
         with colvc1:
             st.markdown("### 📌 VC réelle (brute)")
             if VC_kmh_raw is not None and VC_kmh_raw > 0:
-                pace = format_pace_min_per_km(VC_kmh_raw)
-                vc_pace_str = f"{pace[0]}:{pace[1]:02d} min/km" if pace else "–"
-                st.success(f"**VC réelle = {VC_kmh_raw:.2f} km/h**  \n➡️ **{vc_pace_str}**  \n**D′ = {D_prime_raw:.1f} m**")
+                st.success(
+                    f"**VC réelle = {VC_kmh_raw:.2f} km/h**  \n"
+                    f"➡️ **{_pace_str_from_kmh(VC_kmh_raw)}**  \n"
+                    f"**D′ = {D_prime_raw:.1f} m**"
+                )
             else:
                 st.info("VC brute non calculable.")
         with colvc2:
             st.markdown("### 🔧 VC recalibrée (conditions idéales)")
             if VC_kmh_ideal is not None and VC_kmh_ideal > 0:
-                pace = format_pace_min_per_km(VC_kmh_ideal)
-                vc_pace_str = f"{pace[0]}:{pace[1]:02d} min/km" if pace else "–"
-                st.success(f"**VC recalibrée = {VC_kmh_ideal:.2f} km/h**  \n➡️ **{vc_pace_str}**  \n**D′ = {D_prime_ideal:.1f} m**")
+                st.success(
+                    f"**VC recalibrée = {VC_kmh_ideal:.2f} km/h**  \n"
+                    f"➡️ **{_pace_str_from_kmh(VC_kmh_ideal)}**  \n"
+                    f"**D′ = {D_prime_ideal:.1f} m**"
+                )
             else:
                 st.info("VC recalibrée non calculable.")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # ===================== POWER LAW (fit) + TABLEAU MAINTIEN ======================
+    # ============================================================
+    # TABLEAU TEMPS DE MAINTIEN (%VC) — HYBRIDE
+    # ============================================================
+    st.markdown('<div class="report-card">', unsafe_allow_html=True)
+    st.subheader("📊 Temps de maintien par %VC — Hybride (Power Law <100% / D′ >100%)")
 
-def fit_power_law_from_tests(valid_tests, use_ideal=False):
-    """
-    Fit Power Law : T = A * V^{-k}
-    - V en m/s
-    - T en s
-    Retourne (A, k) ou (None, None)
-    """
-    try:
-        if len(valid_tests) < 2:
-            return None, None
+    A_raw, k_raw = (None, None)
+    A_ideal, k_ideal = (None, None)
 
-        if use_ideal:
-            V = np.array([t["dist_m"] / t["t_s_ideal"] for t in valid_tests if t.get("t_s_ideal") and t["t_s_ideal"] > 0], dtype=float)
-            TT = np.array([t["t_s_ideal"] for t in valid_tests if t.get("t_s_ideal") and t["t_s_ideal"] > 0], dtype=float)
+    if len(valid_tests_raw) >= 2:
+        A_raw, k_raw = fit_power_law_from_tests(valid_tests_raw, use_ideal=False)
+    if len(valid_tests_ideal) >= 2:
+        A_ideal, k_ideal = fit_power_law_from_tests(valid_tests_ideal, use_ideal=True)
+
+    colT1, colT2 = st.columns(2)
+
+    with colT1:
+        st.markdown("### 🟦 VC brute")
+        if VC_kmh_raw is None or VC_kmh_raw <= 0:
+            st.info("VC brute indisponible → pas de tableau.")
         else:
-            V = np.array([t["dist_m"] / t["t_s_raw"] for t in valid_tests if t.get("t_s_raw") and t["t_s_raw"] > 0], dtype=float)
-            TT = np.array([t["t_s_raw"] for t in valid_tests if t.get("t_s_raw") and t["t_s_raw"] > 0], dtype=float)
+            df_hold_raw = build_hybrid_holding_table(
+                VC_kmh=VC_kmh_raw,
+                D_prime_m=D_prime_raw,
+                A_pl=A_raw,
+                k_pl=k_raw,
+                pct_low=80, pct_high=130, step=2
+            )
+            if df_hold_raw is None or df_hold_raw.empty:
+                st.info("Aucune ligne exploitable.")
+            else:
+                if "Vitesse (km/h)" in df_hold_raw.columns:
+                    df_hold_raw["Allure"] = df_hold_raw["Vitesse (km/h)"].apply(_pace_str_from_kmh)
+                st.dataframe(df_hold_raw, hide_index=True, use_container_width=True)
 
-        mask = np.isfinite(V) & np.isfinite(TT) & (V > 0) & (TT > 0)
-        V = V[mask]
-        TT = TT[mask]
-        if len(V) < 2:
-            return None, None
+            if A_raw is not None and k_raw is not None:
+                st.caption(f"Power Law brut : A={A_raw:.2f}, k={k_raw:.3f}")
+            if D_prime_raw is not None:
+                st.caption(f"D′ brut : {D_prime_raw:.1f} m")
 
-        X = np.log(V)
-        Y = np.log(TT)
+    with colT2:
+        st.markdown("### 🟧 VC recalibrée (conditions idéales)")
+        if VC_kmh_ideal is None or VC_kmh_ideal <= 0:
+            st.info("VC recalibrée indisponible → pas de tableau.")
+        else:
+            df_hold_ideal = build_hybrid_holding_table(
+                VC_kmh=VC_kmh_ideal,
+                D_prime_m=D_prime_ideal,
+                A_pl=A_ideal,
+                k_pl=k_ideal,
+                pct_low=80, pct_high=130, step=2
+            )
+            if df_hold_ideal is None or df_hold_ideal.empty:
+                st.info("Aucune ligne exploitable.")
+            else:
+                if "Vitesse (km/h)" in df_hold_ideal.columns:
+                    df_hold_ideal["Allure"] = df_hold_ideal["Vitesse (km/h)"].apply(_pace_str_from_kmh)
+                st.dataframe(df_hold_ideal, hide_index=True, use_container_width=True)
 
-        slope_pl, intercept_pl = np.polyfit(X, Y, 1)
-        k = float(-slope_pl)
-        A = float(np.exp(intercept_pl))
+            if A_ideal is not None and k_ideal is not None:
+                st.caption(f"Power Law recalibré : A={A_ideal:.2f}, k={k_ideal:.3f}")
+            if D_prime_ideal is not None:
+                st.caption(f"D′ recalibré : {D_prime_ideal:.1f} m")
 
-        if not (math.isfinite(A) and math.isfinite(k) and A > 0 and k > 0):
-            return None, None
-
-        return A, k
-    except Exception:
-        return None, None
-
-
-def build_hybrid_holding_table(VC_kmh, D_prime_m, A_pl, k_pl,
-                              pct_low=80, pct_high=130, step=2):
-    """
-    Construit le tableau hybride :
-      - <100% => Power Law
-      - >100% => D'
-    Retourne un DataFrame prêt à afficher.
-    """
-    if VC_kmh is None or not math.isfinite(VC_kmh) or VC_kmh <= 0:
-        return None
-
-    VC_ms = VC_kmh / 3.6
-    rows = []
-
-    # sous-VC (Power Law)
-    if A_pl is not None and k_pl is not None:
-        for p in range(pct_low, 100, step):
-            v_kmh = VC_kmh * (p / 100.0)
-            v_ms = v_kmh / 3.6
-            if v_ms <= 0:
-                continue
-
-            Tlim = A_pl * (v_ms ** (-k_pl))
-            if not (math.isfinite(Tlim) and Tlim > 0):
-                continue
-
-            pace = format_pace_min_per_km(v_kmh)
-            pace_str = f"{pace[0]}:{pace[1]:02d} min/km" if pace else "–"
-
-            rows.append({
-                "% VC": f"{p}%",
-                "Modèle": "Power Law",
-                "Vitesse (km/h)": round(v_kmh, 2),
-                "Allure": pace_str,
-                "Temps limite": seconds_to_hms(Tlim),
-            })
-
-    # au-dessus de VC (D′)
-    if D_prime_m is not None and math.isfinite(D_prime_m) and D_prime_m > 0:
-        for p in range(102, pct_high + 1, step):
-            v_kmh = VC_kmh * (p / 100.0)
-            v_ms = v_kmh / 3.6
-
-            denom = v_ms - VC_ms
-            if denom <= 0:
-                continue
-
-            Tlim = D_prime_m / denom
-            if not (math.isfinite(Tlim) and Tlim > 0):
-                continue
-
-            pace = format_pace_min_per_km(v_kmh)
-            pace_str = f"{pace[0]}:{pace[1]:02d} min/km" if pace else "–"
-
-            rows.append({
-                "% VC": f"{p}%",
-                "Modèle": "D′",
-                "Vitesse (km/h)": round(v_kmh, 2),
-                "Allure": pace_str,
-                "Temps limite": seconds_to_hms(Tlim),
-            })
-
-    if not rows:
-        return None
-
-    dfp = pd.DataFrame(rows)
-
-    # tri logique : %VC croissant
-    def _pct_to_int(s):
-        try:
-            return int(str(s).replace("%", "").strip())
-        except Exception:
-            return 9999
-
-    dfp["_pct"] = dfp["% VC"].apply(_pct_to_int)
-    dfp = dfp.sort_values(["_pct", "Modèle"]).drop(columns=["_pct"]).reset_index(drop=True)
-    return dfp
+    st.markdown("</div>", unsafe_allow_html=True)
 
     # ============================================================
-# ======= TABLEAU TEMPS DE MAINTIEN (%VC) HYBRIDE ============
-#   < 100% : Power Law
-#   > 100% : D′
-#   2 parties : BRUT + RECALIBRÉ
-# ============================================================
-st.markdown('<div class="report-card">', unsafe_allow_html=True)
-st.subheader("📊 Temps de maintien par %VC — Hybride (Power Law <100% / D′ >100%)")
-
-# Fit Power Law sur les mêmes tests valides que VC
-A_raw, k_raw = (None, None)
-A_ideal, k_ideal = (None, None)
-
-if len(valid_tests_raw) >= 2:
-    A_raw, k_raw = fit_power_law_from_tests(valid_tests_raw, use_ideal=False)
-
-if len(valid_tests_ideal) >= 2:
-    A_ideal, k_ideal = fit_power_law_from_tests(valid_tests_ideal, use_ideal=True)
-
-colT1, colT2 = st.columns(2)
-
-with colT1:
-    st.markdown("### 🟦 VC brute")
-    if VC_kmh_raw is None or VC_kmh_raw <= 0:
-        st.info("VC brute indisponible → pas de tableau.")
-    else:
-        if A_raw is None or k_raw is None:
-            st.warning("Power Law brut non ajustable (A/k indisponibles) → seule la partie D′ (>100%) sera affichée si D′ existe.")
-        df_hold_raw = build_hybrid_holding_table(
-            VC_kmh=VC_kmh_raw,
-            D_prime_m=D_prime_raw,
-            A_pl=A_raw,
-            k_pl=k_raw,
-            pct_low=80, pct_high=130, step=2
-        )
-        if df_hold_raw is None:
-            st.info("Aucune ligne exploitable (paramètres invalides).")
-        else:
-            st.dataframe(df_hold_raw, hide_index=True, use_container_width=True)
-
-        # petit rappel paramètres
-        if A_raw is not None and k_raw is not None:
-            st.caption(f"Power Law brut : A={A_raw:.2f}, k={k_raw:.3f}")
-        if D_prime_raw is not None:
-            st.caption(f"D′ brut : {D_prime_raw:.1f} m")
-
-with colT2:
-    st.markdown("### 🟧 VC recalibrée (conditions idéales)")
-    if VC_kmh_ideal is None or VC_kmh_ideal <= 0:
-        st.info("VC recalibrée indisponible → pas de tableau.")
-    else:
-        if A_ideal is None or k_ideal is None:
-            st.warning("Power Law recalibré non ajustable (A/k indisponibles) → seule la partie D′ (>100%) sera affichée si D′ existe.")
-        df_hold_ideal = build_hybrid_holding_table(
-            VC_kmh=VC_kmh_ideal,
-            D_prime_m=D_prime_ideal,
-            A_pl=A_ideal,
-            k_pl=k_ideal,
-            pct_low=80, pct_high=130, step=2
-        )
-        if df_hold_ideal is None:
-            st.info("Aucune ligne exploitable (paramètres invalides).")
-        else:
-            st.dataframe(df_hold_ideal, hide_index=True, use_container_width=True)
-
-        # petit rappel paramètres
-        if A_ideal is not None and k_ideal is not None:
-            st.caption(f"Power Law recalibré : A={A_ideal:.2f}, k={k_ideal:.3f}")
-        if D_prime_ideal is not None:
-            st.caption(f"D′ recalibré : {D_prime_ideal:.1f} m")
-
-st.markdown("</div>", unsafe_allow_html=True)
-
-    # ============================================================
-    # ====================== INDEX CINÉTIQUE ======================
+    # INDEX CINÉTIQUE
     # ============================================================
     st.markdown('<div class="report-card">', unsafe_allow_html=True)
     st.subheader("⚙️ Index de Cinétique (sélection tests)")
@@ -1434,9 +1275,12 @@ st.markdown("</div>", unsafe_allow_html=True)
         tA = tests_data[test_names.index(sel_a)]
         tB = tests_data[test_names.index(sel_b)]
 
-        ic_val, unite, msg, _, reco = compute_index_cinetique(tA["drift_pct"], tB["drift_pct"], tA["drift_bpm"], tB["drift_bpm"])
+        ic_val, unite, msg, _, reco = compute_index_cinetique(
+            tA.get("drift_pct"), tB.get("drift_pct"),
+            tA.get("drift_bpm"), tB.get("drift_bpm")
+        )
 
-        if ic_val is not None:
+        if ic_val is not None and reco is not None:
             st.markdown(f"**IC = {ic_val*100:.1f}%** ({unite})")
             st.info(msg)
             st.markdown(f"**{reco['titre']}**")
@@ -1450,7 +1294,7 @@ st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
     # ============================================================
-    # ========================== EXPORT PDF ========================
+    # EXPORT PDF
     # ============================================================
     st.markdown('<div class="report-card">', unsafe_allow_html=True)
     st.subheader("📄 Export PDF — Rapport complet des tests")
@@ -1464,10 +1308,7 @@ st.markdown("</div>", unsafe_allow_html=True)
                 seg = t["segment"]
                 t0 = seg["time_s"].iloc[0]
                 plot_multi_signals(
-                    axG,
-                    seg,
-                    t0=t0,
-                    who=f"T{t['i']}",
+                    axG, seg, t0=t0, who=f"T{t['i']}",
                     show_fc=True,
                     show_pace=(get_speed_col(seg) is not None),
                     show_power=("power_smooth" in seg.columns),
@@ -1475,14 +1316,6 @@ st.markdown("</div>", unsafe_allow_html=True)
             axG.set_title("Comparaison des cinétiques — Tous les tests")
             axG.set_xlabel("Temps segment (s)")
             axG.grid(True, alpha=0.2)
-
-            handles, labels = [], []
-            for a in figG.axes:
-                h, l = a.get_legend_handles_labels()
-                handles += h
-                labels += l
-            if handles:
-                axG.legend(handles, labels, fontsize=7, loc="upper left")
             figs_export.append(figG)
 
         for t in tests_data:
@@ -1490,10 +1323,7 @@ st.markdown("</div>", unsafe_allow_html=True)
             seg = t["segment"]
             t0 = seg["time_s"].iloc[0]
             plot_multi_signals(
-                ax_i,
-                seg,
-                t0=t0,
-                who=f"T{t['i']}",
+                ax_i, seg, t0=t0, who=f"T{t['i']}",
                 show_fc=True,
                 show_pace=(get_speed_col(seg) is not None),
                 show_power=("power_smooth" in seg.columns),
@@ -1532,9 +1362,9 @@ with tabs[1]:
 
     if uploaded_file:
         try:
-            df = load_activity(uploaded_file)
-            df, window, dur, pauses = smooth_hr(df)
-            st.session_state.training_session = (df, window, dur, pauses, uploaded_file.name)
+            df_tr = load_activity(uploaded_file)
+            df_tr, window, dur, pauses = smooth_hr(df_tr)
+            st.session_state.training_session = (df_tr, window, dur, pauses, uploaded_file.name)
         except Exception as e:
             st.error(f"Erreur chargement séance : {e}")
 
@@ -1542,19 +1372,14 @@ with tabs[1]:
         st.info("Importe une séance pour commencer l’analyse.")
         st.stop()
 
-    df, window, dur, pauses, filename = st.session_state.training_session
-
+    df_tr, window, dur, pauses, filename = st.session_state.training_session
     st.markdown(f"### 📂 Séance importée : **{filename}**")
     st.caption(f"Durée totale : {dur:.1f}s • Lissage : {window}s • Pauses détectées : {pauses}")
 
-    # ---------------------------------------------------------------
-    # 1) DÉFINITION DES INTERVALLES
-    # ---------------------------------------------------------------
     st.markdown("## 📏 Définition des intervalles")
 
     for i, (start_s, end_s) in enumerate(st.session_state.training_intervals):
         c1, c2, c3 = st.columns([1, 1, 0.3])
-
         with c1:
             s_str = st.text_input(
                 f"Début intervalle {i+1} (hh:mm:ss)",
@@ -1584,33 +1409,26 @@ with tabs[1]:
         st.session_state.training_intervals.append((0, 300))
         st.rerun()
 
-    # ---------------------------------------------------------------
-    # 2) ANALYSE DES INTERVALLES
-    # ---------------------------------------------------------------
     st.markdown("## 🔍 Analyse des intervalles")
 
     interval_segments = []
 
     for i, (s_sec, e_sec) in enumerate(st.session_state.training_intervals):
-        seg = df[(df["time_s"] >= s_sec) & (df["time_s"] <= e_sec)]
+        seg = df_tr[(df_tr["time_s"] >= s_sec) & (df_tr["time_s"] <= e_sec)]
         if seg.empty or len(seg) < 10:
             continue
 
         interval_segments.append((i + 1, seg, s_sec, e_sec))
 
-        # --- FC ---
         stats, d_bpm, d_pct = analyze_heart_rate(seg)
 
-        # --- Distance / temps ---
         dist_m = segment_distance_m(seg)
         t_s_raw = float(e_sec - s_sec)
         v_kmh_raw = (3.6 * dist_m / t_s_raw) if (t_s_raw > 0 and dist_m > 0) else 0.0
 
-        # --- D+ / D- / pente ---
         D_up, D_down = segment_elevation_up_down(seg)
         grade_pct = segment_grade_percent_net(seg)
 
-        # --- METEO ---
         avgT, avgW, avgH = get_segment_weather(seg)
         manual_temp_int = st.number_input(
             f"🌡️ Température manuelle Intervalle {i+1} (°C) (si météo auto indispo)",
@@ -1620,35 +1438,22 @@ with tabs[1]:
         )
         temp_real = avgT if avgT is not None else (manual_temp_int if manual_temp_int != 0.0 else None)
 
-        # --- recalibrage temps -> idéal ---
         t_s_ideal = recalibrate_time_to_ideal(
             time_seconds_raw=t_s_raw,
-            D_up=D_up,
-            D_down=D_down,
-            distance_m=dist_m if dist_m > 0 else 1000.0,
+            D_up=D_up, D_down=D_down,
+            distance_m=(dist_m if dist_m > 0 else 1000.0),
             temp_real=temp_real,
-            k_up=k_up,
-            k_down=k_down,
-            k_temp_hot=k_temp_hot,
-            k_temp_cold=k_temp_cold,
+            k_up=k_up, k_down=k_down,
+            k_temp_hot=k_temp_hot, k_temp_cold=k_temp_cold,
             opt_temp=opt_temp,
         )
-        v_kmh_ideal = (
-            (3.6 * dist_m / t_s_ideal) if (t_s_ideal is not None and t_s_ideal > 0 and dist_m > 0) else None
-        )
+        v_kmh_ideal = (3.6 * dist_m / t_s_ideal) if (t_s_ideal and t_s_ideal > 0 and dist_m > 0) else None
 
-        # --- allures ---
-        pace_raw = format_pace_min_per_km(v_kmh_raw)
-        pace_raw_str = f"{pace_raw[0]}:{pace_raw[1]:02d} min/km" if pace_raw else "–"
-        pace_ideal = format_pace_min_per_km(v_kmh_ideal) if v_kmh_ideal else None
-        pace_ideal_str = f"{pace_ideal[0]}:{pace_ideal[1]:02d} min/km" if pace_ideal else "–"
+        pace_raw_str = _pace_str_from_kmh(v_kmh_raw)
+        pace_ideal_str = _pace_str_from_kmh(v_kmh_ideal) if v_kmh_ideal else "–"
 
-        # --- dérive vitesse ---
         d_v_kmh, d_v_pct = analyze_speed_kinetics(seg)
 
-        # -------------------------
-        # TABLEAU
-        # -------------------------
         st.markdown(f"### Intervalle {i+1} ({s_sec:.0f}s → {e_sec:.0f}s)")
 
         df_table = pd.DataFrame(
@@ -1676,9 +1481,9 @@ with tabs[1]:
                     "Humidité (%)",
                 ],
                 "Valeur": [
-                    stats["FC moyenne (bpm)"],
-                    stats["FC max (bpm)"],
-                    stats["FC min (bpm)"],
+                    stats.get("FC moyenne (bpm)"),
+                    stats.get("FC max (bpm)"),
+                    stats.get("FC min (bpm)"),
                     d_bpm,
                     d_pct,
                     d_v_kmh,
@@ -1702,9 +1507,6 @@ with tabs[1]:
 
         st.dataframe(style_metrics_table(df_table), hide_index=True, use_container_width=True)
 
-        # -------------------------
-        # GRAPHIQUE SEGMENT
-        # -------------------------
         fig, ax = plt.subplots(figsize=(9, 4.2))
         plot_multi_signals(
             ax,
@@ -1719,9 +1521,6 @@ with tabs[1]:
         ax.grid(True, alpha=0.25)
         st.pyplot(fig)
 
-    # ---------------------------------------------------------------
-    # GRAPHIQUE COMBINÉ (intervalles superposés)
-    # ---------------------------------------------------------------
     if interval_segments:
         st.markdown("## 📊 Graphique combiné — tous les intervalles superposés")
         show_fc = st.checkbox("☑ FC", True, key="comb_fc_training_v2")
@@ -1753,3 +1552,7 @@ with tabs[1]:
             axC.legend(handles, labels, fontsize=8, loc="upper left")
 
         st.pyplot(figC)
+
+# ============================================================
+# === CODE COMPLET — FIN ===
+# ============================================================
