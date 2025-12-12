@@ -9,7 +9,6 @@ import fitdecode
 import math
 from io import BytesIO
 from datetime import date, datetime, timedelta
-import matplotlib as mpl
 import xml.etree.ElementTree as ET
 import gpxpy
 import requests
@@ -52,32 +51,37 @@ st.markdown("""
 ACCEPTED_TYPES = ["fit","FIT","gpx","GPX","csv","CSV","tcx","TCX"]
 
 # ========================= SIDEBAR — COEFFICIENTS (CODE 2) ==============================
-st.sidebar.header("🧭 Recalibrage conditions (code 2)")
+st.sidebar.header("⚙️ Coefficients (comme code 2)")
 
-use_conditions = st.sidebar.checkbox("Activer recalibrage", value=True)
+use_elev_coeff = st.sidebar.checkbox("Activer coefficients montée/descente 🎢", value=True)
+if use_elev_coeff:
+    k_up = st.sidebar.number_input("Coefficient montée (k_up)", value=1.040, format="%.3f", step=0.001)
+    k_down = st.sidebar.number_input("Coefficient descente (k_down)", value=0.996, format="%.3f", step=0.001)
+else:
+    k_up = 1.0
+    k_down = 1.0
 
-st.sidebar.subheader("🎢 Dénivelé")
-k_up = st.sidebar.number_input("Coefficient montée (k_up)", value=1.040, format="%.3f", step=0.001)
-k_down = st.sidebar.number_input("Coefficient descente (k_down)", value=0.996, format="%.3f", step=0.001)
+use_temp_coeff = st.sidebar.checkbox("Activer coefficients température 🌡️", value=True)
+if use_temp_coeff:
+    k_temp_hot = st.sidebar.number_input("Sensibilité chaude (k_temp_hot)", value=0.0020, format="%.4f", step=0.0005)
+    k_temp_cold = st.sidebar.number_input("Sensibilité froide (k_temp_cold)", value=0.0020, format="%.4f", step=0.0005)
+    opt_temp = st.sidebar.number_input("Température optimale (°C)", value=12.0, format="%.1f", step=0.5)
+else:
+    k_temp_hot = 0.0
+    k_temp_cold = 0.0
+    opt_temp = 12.0
 
-st.sidebar.subheader("🌡️ Température")
-opt_temp = st.sidebar.number_input("Température idéale (°C)", value=12.0, format="%.1f", step=0.5)
-k_temp_hot = st.sidebar.number_input("Sensibilité chaleur (k_temp_hot)", value=0.0020, format="%.4f", step=0.0005)
-k_temp_cold = st.sidebar.number_input("Sensibilité froid (k_temp_cold)", value=0.0020, format="%.4f", step=0.0005)
+st.sidebar.caption("👉 Température récupérée automatiquement via Open-Meteo archive si lat/lon + timestamps dispo.\n"
+                   "Sinon fallback sur une température manuelle.")
 
-st.sidebar.caption(
-    "Logique identique au code 2 :\n"
-    "- facteur dénivelé via D+/D-\n"
-    "- facteur température non linéaire autour de T° idéale"
-)
+manual_temp_fallback = st.sidebar.number_input("Temp fallback (°C) si météo impossible", value=float(opt_temp), step=0.5)
 
-# ========================= MÉTÉO — OPEN-METEO ARCHIVE (CODE 2) ==============================
-
+# ========================= MÉTÉO — OPEN-METEO ARCHIVE (COMME CODE 2) ==============================
 @st.cache_data(show_spinner=False)
 def get_weather_openmeteo_day(lat, lon, date_obj):
     """
-    Récupère la journée météo (horaire) via Open-Meteo Archive.
-    Retourne times(list[datetime]), temps(list[float]) ou None.
+    Récupère TOUTE la journée météo (24 valeurs horaires) en un seul appel.
+    Retourne times(list datetime), temps(list), winds(list), hums(list)
     """
     try:
         date_str = date_obj.strftime("%Y-%m-%d")
@@ -85,48 +89,54 @@ def get_weather_openmeteo_day(lat, lon, date_obj):
             "https://archive-api.open-meteo.com/v1/archive?"
             f"latitude={lat}&longitude={lon}"
             f"&start_date={date_str}&end_date={date_str}"
-            "&hourly=temperature_2m"
+            "&hourly=temperature_2m,relativehumidity_2m,wind_speed_10m"
             "&timezone=UTC"
         )
         r = requests.get(url, timeout=20)
         data = r.json()
         if "hourly" not in data:
             return None
+
         times = [datetime.fromisoformat(t) for t in data["hourly"]["time"]]
         temps = data["hourly"]["temperature_2m"]
-        return times, temps
+        winds = data["hourly"]["wind_speed_10m"]
+        hums  = data["hourly"]["relativehumidity_2m"]
+        return times, temps, winds, hums
     except Exception:
         return None
 
 def _to_utc_naive(dt):
-    """Convertit datetime tz-aware en UTC naive. Si naive -> on suppose UTC."""
     if dt is None:
         return None
     try:
-        if getattr(dt, "tzinfo", None) is not None and dt.tzinfo is not None:
-            return dt.astimezone(tz=timezone.utc).replace(tzinfo=None)  # type: ignore
-    except Exception:
-        pass
-    # dt naive : on suppose UTC (comme code2 qui enlève tzinfo)
-    try:
+        if isinstance(dt, str):
+            dt = pd.to_datetime(dt, errors="coerce")
+            if pd.isna(dt):
+                return None
+            dt = dt.to_pydatetime()
+        if hasattr(dt, "tzinfo") and dt.tzinfo is not None:
+            # Convert to UTC then drop tz
+            return dt.astimezone(datetime.timezone.utc).replace(tzinfo=None)  # type: ignore
         return dt.replace(tzinfo=None)
     except Exception:
-        return dt
-
-def get_avg_temp_for_period(lat, lon, start_dt, end_dt):
-    """
-    Même logique que code 2 (get_avg_weather_for_period simplifié à temp).
-    - si fenêtre trop courte <5min => élargit
-    - sélection des heures dans intervalle
-    - si vide => prend l'heure la plus proche
-    """
-    if start_dt is None or end_dt is None:
         return None
+
+def get_avg_weather_for_period(lat, lon, start_dt, end_dt):
+    """
+    Même logique que ton code 2:
+      - élargit si < 5 minutes
+      - charge la journée
+      - moyenne sur l’intervalle
+      - fallback : heure la plus proche
+    """
     try:
+        if start_dt is None or end_dt is None:
+            return None, None, None
+
         start_dt = _to_utc_naive(start_dt)
         end_dt = _to_utc_naive(end_dt)
         if start_dt is None or end_dt is None:
-            return None
+            return None, None, None
 
         if (end_dt - start_dt).total_seconds() < 300:
             start_dt -= timedelta(minutes=2)
@@ -134,26 +144,59 @@ def get_avg_temp_for_period(lat, lon, start_dt, end_dt):
 
         meteo_day = get_weather_openmeteo_day(lat, lon, start_dt.date())
         if not meteo_day:
-            return None
+            return None, None, None
 
-        times, temps = meteo_day
+        times, temps, winds, hums = meteo_day
+
         selT = [T for t, T in zip(times, temps) if start_dt <= t <= end_dt]
+        selW = [W for t, W in zip(times, winds) if start_dt <= t <= end_dt]
+        selH = [H for t, H in zip(times, hums)  if start_dt <= t <= end_dt]
 
         if not selT:
-            idx = min(range(len(times)), key=lambda i: abs(times[i] - start_dt))
-            return float(temps[idx])
+            closest_index = min(range(len(times)), key=lambda i: abs(times[i] - start_dt))
+            return float(temps[closest_index]), float(winds[closest_index]), float(hums[closest_index])
 
-        return float(np.mean(selT))
+        return float(np.mean(selT)), float(np.mean(selW)), float(np.mean(selH))
     except Exception:
-        return None
+        return None, None, None
 
-# ========================= CONDITIONS — EXACT CODE 2 (adaptées à vitesse) ==============================
+def infer_segment_weather(df_seg):
+    """
+    Déduit température moyenne segment via Open-Meteo archive.
+    Besoin: lat/lon + timestamps dans le segment.
+    """
+    try:
+        if df_seg is None or df_seg.empty:
+            return None, None, None
 
+        lc = {c.lower(): c for c in df_seg.columns}
+        if not ("lat" in lc and "lon" in lc and "timestamp" in lc):
+            return None, None, None
+
+        latc = pd.to_numeric(df_seg[lc["lat"]], errors="coerce")
+        lonc = pd.to_numeric(df_seg[lc["lon"]], errors="coerce")
+        if latc.notna().sum() < 5 or lonc.notna().sum() < 5:
+            return None, None, None
+
+        lat = float(latc.dropna().iloc[len(latc.dropna())//2])
+        lon = float(lonc.dropna().iloc[len(lonc.dropna())//2])
+
+        t0 = pd.to_datetime(df_seg[lc["timestamp"]], errors="coerce").dropna()
+        if t0.empty:
+            return None, None, None
+        start_dt = t0.iloc[0].to_pydatetime()
+        end_dt = t0.iloc[-1].to_pydatetime()
+
+        return get_avg_weather_for_period(lat, lon, start_dt, end_dt)
+    except Exception:
+        return None, None, None
+
+# ========================= MODÈLE TEMP (NON LINÉAIRE) — CODE 2 ==============================
 def temp_multiplier_nonlin(temp, opt_temp=12.0, k_hot=0.002, k_cold=0.002):
     """
-    Multiplicateur simple :
-      - si temp > opt => 1 + k_hot*(temp-opt)
-      - si temp < opt => 1 + k_cold*(opt-temp)
+    Identique à code 2:
+    >opt -> 1 + k_hot*(temp-opt)
+    <opt -> 1 + k_cold*(opt-temp)
     """
     try:
         if temp is None:
@@ -163,57 +206,55 @@ def temp_multiplier_nonlin(temp, opt_temp=12.0, k_hot=0.002, k_cold=0.002):
             mult = 1.0 + float(k_hot) * diff
         else:
             mult = 1.0 + float(k_cold) * (-diff)
-        return max(0.1, mult)
+        return max(0.1, float(mult))
     except Exception:
         return 1.0
 
-def elevation_factor_code2(d_up, d_down, segment_length_m=1000.0, k_up=1.04, k_down=0.996):
+def factor_elevation(dist_m, d_up, d_down, k_up=1.040, k_down=0.996):
     """
-    Même logique que apply_elevation_gradient_route du code 2,
-    mais on renvoie le facteur multiplicatif sur le TEMPS.
+    Identique esprit code 2:
+    factor = 1 + (k_up-1)*(D_up/dist) + (1-k_down)*(D_down/dist)
     """
     try:
-        seg_len = float(segment_length_m) if segment_length_m and segment_length_m > 0 else 1000.0
-        up_factor = (float(k_up) - 1.0) * (float(d_up) / seg_len)
-        down_factor = (1.0 - float(k_down)) * (float(d_down) / seg_len)
+        dist_m = float(dist_m) if dist_m and dist_m > 0 else 1000.0
+        up_factor = (float(k_up) - 1.0) * (float(d_up) / dist_m)
+        down_factor = (1.0 - float(k_down)) * (float(d_down) / dist_m)
         factor = 1.0 + up_factor + down_factor
         return max(0.01, float(factor))
     except Exception:
         return 1.0
 
-def speed_equivalent_ideal(v_kmh_raw, d_up, d_down, dist_m, temp_real,
-                           k_up, k_down, k_temp_hot, k_temp_cold, opt_temp):
+def recalibrate_time_to_ideal(time_s_raw, dist_m, d_up, d_down, temp_real):
     """
-    Convertit une vitesse mesurée en vitesse équivalente "conditions idéales"
-    (plat & T° idéale), cohérente avec le modèle temps du code 2.
-    Idée :
-      temps_brut = dist / v
-      temps_sans_elev = temps / factor_elev
-      temps_sans_temp = temps / mult_temp
-      => vitesse_eq = dist / temps_ideal = v / (factor_elev * mult_temp)
+    Recalibre un temps brut vers conditions idéales (plat + opt_temp),
+    exactement dans l’esprit de recalibrate_ref_to_ideal du code 2.
     """
-    if v_kmh_raw is None or not math.isfinite(v_kmh_raw) or v_kmh_raw <= 0:
+    if time_s_raw is None or not math.isfinite(time_s_raw) or time_s_raw <= 0:
         return None
 
-    factor_elev = elevation_factor_code2(
-        d_up=d_up, d_down=d_down, segment_length_m=dist_m, k_up=k_up, k_down=k_down
-    )
-    mult_temp = temp_multiplier_nonlin(
-        temp_real, opt_temp=opt_temp, k_hot=k_temp_hot, k_cold=k_temp_cold
-    ) if temp_real is not None else 1.0
+    # 1) retirer élévation
+    fe = factor_elevation(dist_m, d_up, d_down, k_up=k_up, k_down=k_down)
+    t_no_elev = float(time_s_raw) / fe
 
-    denom = factor_elev * mult_temp
-    denom = max(1e-6, denom)
-    v_eq = float(v_kmh_raw) / denom
+    # 2) retirer température réelle
+    mult_real = temp_multiplier_nonlin(temp_real, opt_temp=opt_temp, k_hot=k_temp_hot, k_cold=k_temp_cold)
+    t_no_temp = t_no_elev / (mult_real if mult_real != 0 else 1.0)
 
-    if not math.isfinite(v_eq) or v_eq <= 0:
-        return None
-    return v_eq
+    # 3) appliquer temp optimale (mult_opt = 1.0 par construction)
+    mult_opt = temp_multiplier_nonlin(opt_temp, opt_temp=opt_temp, k_hot=k_temp_hot, k_cold=k_temp_cold)
+    t_ideal = t_no_temp * mult_opt
+    return max(0.0, float(t_ideal))
 
 # ========================= LECTURE FICHIERS ==============================
 
+def _fit_semi_to_deg(x):
+    try:
+        return float(x) * (180.0 / (2**31))
+    except Exception:
+        return None
+
 def load_activity(file):
-    """Charge un fichier FIT, GPX, CSV ou TCX."""
+    """Charge un fichier FIT, GPX, CSV ou TCX. Harmonise: timestamp, heart_rate, lat/lon, alt, distance, speed, power."""
     name = file.name.lower()
 
     if name.endswith(".csv"):
@@ -222,15 +263,34 @@ def load_activity(file):
     elif name.endswith(".fit"):
         data = []
         try:
+            file.seek(0)
             with fitdecode.FitReader(file) as fit:
                 for frame in fit:
                     if isinstance(frame, fitdecode.records.FitDataMessage) and frame.name == "record":
-                        data.append({f.name: f.value for f in frame.fields})
+                        row = {f.name: f.value for f in frame.fields}
+                        data.append(row)
             df = pd.DataFrame(data)
         except Exception as e:
             raise ValueError(f"Erreur FIT : {e}")
 
+        # Harmonisation lat/lon FIT (position_lat/position_long -> degrés)
+        if "position_lat" in df.columns and "lat" not in df.columns:
+            df["lat"] = df["position_lat"].apply(_fit_semi_to_deg)
+        if "position_long" in df.columns and "lon" not in df.columns:
+            df["lon"] = df["position_long"].apply(_fit_semi_to_deg)
+
+        # Harmonisation altitude FIT
+        if "enhanced_altitude" in df.columns and "alt" not in df.columns:
+            df["alt"] = df["enhanced_altitude"]
+        elif "altitude" in df.columns and "alt" not in df.columns:
+            df["alt"] = df["altitude"]
+
+        # Harmonisation HR FIT
+        if "heart_rate" not in df.columns and "hr" in df.columns:
+            df["heart_rate"] = df["hr"]
+
     elif name.endswith(".gpx"):
+        file.seek(0)
         gpx = gpxpy.parse(file)
         data = []
         for trk in gpx.tracks:
@@ -246,6 +306,7 @@ def load_activity(file):
 
     elif name.endswith(".tcx"):
         try:
+            file.seek(0)
             content = file.read().decode("utf-8", errors="ignore")
             root = ET.fromstring(content)
 
@@ -258,6 +319,7 @@ def load_activity(file):
                 lat = tp.find(".//{*}Position/{*}LatitudeDegrees")
                 lon = tp.find(".//{*}Position/{*}LongitudeDegrees")
                 powv = tp.find(".//{*}Watts")
+                spd = tp.find(".//{*}Extensions//{*}Speed")
 
                 data.append({
                     "timestamp": t.text if t is not None else None,
@@ -267,6 +329,7 @@ def load_activity(file):
                     "power": float(powv.text) if powv is not None else None,
                     "lat": float(lat.text) if lat is not None else None,
                     "lon": float(lon.text) if lon is not None else None,
+                    "speed": float(spd.text) if spd is not None else None,
                 })
 
             df = pd.DataFrame(data)
@@ -279,32 +342,37 @@ def load_activity(file):
         raise ValueError("Format non supporté (.fit, .gpx, .csv, .tcx uniquement)")
 
     # Harmonisation timestamp
-    for c in df.columns:
-        if "time" in c.lower():
-            df = df.rename(columns={c: "timestamp"})
-            break
+    if "timestamp" not in df.columns:
+        for c in df.columns:
+            if "time" in c.lower():
+                df = df.rename(columns={c: "timestamp"})
+                break
 
-    if "heart_rate" not in df.columns:
-        raise ValueError("Pas de FC détectée")
+    if "timestamp" in df.columns:
+        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
 
-    df = df.dropna(subset=["heart_rate"]).reset_index(drop=True)
-
-    # Nettoyage
+    # Nettoyage numeric
     for c in ["heart_rate","speed","enhanced_speed","power","distance","lat","lon","alt"]:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
 
+    if "heart_rate" not in df.columns or df["heart_rate"].dropna().empty:
+        raise ValueError("Pas de FC détectée")
+
+    df = df.dropna(subset=["heart_rate"]).reset_index(drop=True)
     return df
 
 # ========================= OUTILS CALCUL ==============================
 
 def get_speed_col(df):
+    if "speed_smooth" in df.columns:
+        return "speed_smooth"
     if "enhanced_speed" in df.columns: return "enhanced_speed"
     if "speed" in df.columns: return "speed"
     return None
 
 # ------------------------------------------------------------
-# Lissage Cardio
+# Lissage cardio/vitesse/puissance
 # ------------------------------------------------------------
 def smooth_hr(df, time_col="timestamp", hr_col="heart_rate"):
     df = df.copy().sort_values(by=time_col).reset_index(drop=True)
@@ -318,7 +386,7 @@ def smooth_hr(df, time_col="timestamp", hr_col="heart_rate"):
     df.loc[df["delta_t"] > 2 * median_step, "delta_t"] = median_step
 
     df["time_s"] = df["delta_t"].cumsum()
-    total_dur = df["time_s"].iloc[-1]
+    total_dur = float(df["time_s"].iloc[-1]) if not df.empty else 0.0
 
     if total_dur < 360:
         window_sec = 5
@@ -327,23 +395,30 @@ def smooth_hr(df, time_col="timestamp", hr_col="heart_rate"):
     else:
         window_sec = 20
 
-    step = np.median(np.diff(df["time_s"]))
+    step = np.median(np.diff(df["time_s"])) if len(df) > 3 else 1.0
     if step <= 0 or np.isnan(step):
         step = 1
     window_size = max(1, int(window_sec / step))
 
     df["hr_smooth"] = df[hr_col].rolling(window_size, min_periods=1).mean()
-    sp = get_speed_col(df)
+
+    sp = None
+    if "enhanced_speed" in df.columns:
+        sp = "enhanced_speed"
+    elif "speed" in df.columns:
+        sp = "speed"
+
     if sp:
         df["speed_smooth"] = df[sp].rolling(window_size, min_periods=1).mean()
+
     if "power" in df.columns:
         df["power_smooth"] = df["power"].rolling(window_size, min_periods=1).mean()
 
-    pauses = (df["delta_t"] > 2 * median_step).sum()
+    pauses = int((df["delta_t"] > 2 * median_step).sum())
     return df, window_sec, total_dur, pauses
 
 # ------------------------------------------------------------
-# Analyse FC
+# Analyse FC (dérive)
 # ------------------------------------------------------------
 def analyze_heart_rate(df):
     hr = df["hr_smooth"].dropna()
@@ -366,25 +441,8 @@ def analyze_heart_rate(df):
     return stats, float(drift_per_min), (None if np.isnan(drift_percent) else float(drift_percent))
 
 # ------------------------------------------------------------
-# Outils divers
+# Distance segment robuste
 # ------------------------------------------------------------
-def parse_time_to_seconds(tstr: str) -> int:
-    tstr = tstr.strip()
-    if ":" not in tstr:
-        try:
-            val = float(tstr.replace(",", "."))
-            return int(round(val))
-        except:
-            raise ValueError("Format temps invalide")
-    parts = [int(p) for p in tstr.split(":")]
-    if len(parts) == 3:
-        h, m, s = parts
-    elif len(parts) == 2:
-        h, m, s = 0, parts[0], parts[1]
-    else:
-        h, m, s = 0, 0, parts[0]
-    return int(h * 3600 + m * 60 + s)
-
 def haversine_dist_m(lat1, lon1, lat2, lon2):
     R = 6371008.8
     phi1 = np.radians(lat1); phi2 = np.radians(lat2)
@@ -396,19 +454,25 @@ def segment_distance_m(df_seg):
     if df_seg is None or df_seg.empty or len(df_seg) < 2:
         return 0.0
 
-    for cname in df_seg.columns:
-        if cname.lower() == "distance":
-            d0 = float(df_seg[cname].iloc[0])
-            d1 = float(df_seg[cname].iloc[-1])
-            if np.isfinite(d0) and np.isfinite(d1):
-                return max(0.0, d1 - d0)
+    # 1) distance cumulée si dispo
+    if "distance" in df_seg.columns and df_seg["distance"].dropna().shape[0] >= 2:
+        d0 = float(df_seg["distance"].iloc[0])
+        d1 = float(df_seg["distance"].iloc[-1])
+        if np.isfinite(d0) and np.isfinite(d1):
+            return max(0.0, d1 - d0)
 
-    speed_col = next((c for c in df_seg.columns if c.lower() in ("speed", "enhanced_speed")), None)
-    if speed_col is not None and "delta_t" in df_seg.columns:
-        dist = float(np.nansum(df_seg[speed_col].fillna(0).values * df_seg["delta_t"].fillna(0).values))
+    # 2) speed * dt si dispo
+    sp = None
+    if "enhanced_speed" in df_seg.columns:
+        sp = "enhanced_speed"
+    elif "speed" in df_seg.columns:
+        sp = "speed"
+    if sp is not None and "delta_t" in df_seg.columns:
+        dist = float(np.nansum(df_seg[sp].fillna(0).values * df_seg["delta_t"].fillna(0).values))
         if dist > 0:
             return dist
 
+    # 3) lat/lon
     lc = {c.lower(): c for c in df_seg.columns}
     if "lat" in lc and "lon" in lc:
         lats = df_seg[lc["lat"]].astype(float).values
@@ -417,64 +481,28 @@ def segment_distance_m(df_seg):
         for i in range(1, len(df_seg)):
             if all(np.isfinite([lats[i-1], lats[i], lons[i-1], lons[i]])):
                 dist += haversine_dist_m(lats[i-1], lons[i-1], lats[i], lons[i])
-        if dist > 0:
-            return dist
+        return float(max(0.0, dist))
 
     return 0.0
 
-def segment_dplus_dminus(df_seg):
-    """
-    D+ / D- robustes (alt nettoyée + diff + clip), pour appliquer le modèle code2.
-    """
+def compute_dplus_dminus(df_seg):
     if df_seg is None or df_seg.empty or "alt" not in df_seg.columns:
         return 0.0, 0.0
 
     alt = pd.to_numeric(df_seg["alt"], errors="coerce").astype(float)
-    alt = alt.replace([np.inf, -np.inf], np.nan)
-    if alt.notna().sum() < 2:
-        return 0.0, 0.0
-
-    alt = alt.interpolate(limit_direction="both")
+    alt = alt.replace([np.inf, -np.inf], np.nan).interpolate(limit_direction="both")
     alt = alt.rolling(5, min_periods=1, center=True).median()
 
     d = alt.diff().fillna(0.0)
-    d_up = float(d.clip(lower=0).sum())
-    d_down = float((-d.clip(upper=0)).sum())
+    d_up = float(d[d > 0].sum())
+    d_down = float((-d[d < 0]).sum())
     if not math.isfinite(d_up): d_up = 0.0
     if not math.isfinite(d_down): d_down = 0.0
     return max(0.0, d_up), max(0.0, d_down)
 
-def get_segment_avg_temp(df_seg):
-    """
-    Température moyenne Open-Meteo archive sur la fenêtre du segment.
-    Nécessite lat/lon et timestamp.
-    """
-    try:
-        if df_seg is None or df_seg.empty:
-            return None
-        if "lat" not in df_seg.columns or "lon" not in df_seg.columns:
-            return None
-        if "timestamp" not in df_seg.columns:
-            return None
-
-        lat0 = df_seg["lat"].dropna()
-        lon0 = df_seg["lon"].dropna()
-        if lat0.empty or lon0.empty:
-            return None
-
-        lat = float(lat0.iloc[0])
-        lon = float(lon0.iloc[0])
-
-        t0 = pd.to_datetime(df_seg["timestamp"], errors="coerce").dropna()
-        if t0.empty:
-            return None
-        start_dt = t0.iloc[0].to_pydatetime()
-        end_dt = t0.iloc[-1].to_pydatetime()
-
-        return get_avg_temp_for_period(lat, lon, start_dt, end_dt)
-    except Exception:
-        return None
-
+# ------------------------------------------------------------
+# Allure
+# ------------------------------------------------------------
 def format_pace_min_per_km(v_kmh):
     if v_kmh is None or v_kmh <= 0 or not math.isfinite(v_kmh):
         return None
@@ -482,6 +510,9 @@ def format_pace_min_per_km(v_kmh):
     total_seconds = int(round(min_per_km * 60.0))
     return total_seconds // 60, total_seconds % 60, min_per_km
 
+# ------------------------------------------------------------
+# Export PDF
+# ------------------------------------------------------------
 def fig_to_pdf_bytes(figs):
     if not isinstance(figs, (list, tuple)):
         figs = [figs]
@@ -494,46 +525,8 @@ def fig_to_pdf_bytes(figs):
     return buf
 
 # ------------------------------------------------------------
-# NOUVEAUX OUTILS — FC vs Allure
+# Cinétique vitesse
 # ------------------------------------------------------------
-def compute_pace_series(df):
-    """Convertit la vitesse m/s → min/km (retourne une série pandas)."""
-    sp = get_speed_col(df)
-    if not sp:
-        return None
-    v = df[sp].astype(float)
-    v_kmh = v * 3.6
-    pace = 60.0 / v_kmh.replace(0, np.nan)
-    return pace
-
-def compare_fc_pace(df):
-    if "speed_smooth" not in df.columns:
-        return None, None, "Allure non disponible"
-
-    pace = compute_pace_series(df)
-    if pace is None:
-        return None, None, "Allure non disponible"
-
-    mask = np.isfinite(df["hr_smooth"]) & np.isfinite(pace)
-    if mask.sum() < 30:
-        return None, None, "Données insuffisantes"
-
-    x = pace[mask]
-    y = df["hr_smooth"][mask]
-
-    corr = np.corrcoef(x, y)[0, 1]
-    slope, intercept, _, _, _ = linregress(x, y)
-
-    if corr > 0.5:
-        msg = "La FC augmente lorsque l’allure ralentit → dérive cardiaque ou fatigue."
-    elif corr < -0.5:
-        msg = "La FC augmente quand l’allure accélère → comportement normal."
-    else:
-        msg = "Relation faible : allure et FC peu liées sur ce segment."
-
-    return float(corr), float(slope), msg
-
-# ========================= CINÉTIQUE VITESSE =========================
 def analyze_speed_kinetics(df):
     sp_col = get_speed_col(df)
     if sp_col is None or df[sp_col].dropna().empty:
@@ -547,6 +540,7 @@ def analyze_speed_kinetics(df):
     return round(drift_per_min, 4), round(drift_percent, 4) if drift_percent is not None else None
 
 # ========================= INDEX CINÉTIQUE ==============================
+
 def compute_index_cinetique(drift_short_pct, drift_long_pct, drift_short_bpm, drift_long_bpm):
     use_pct = (drift_short_pct is not None and drift_long_pct is not None and drift_short_pct != 0)
     if use_pct:
@@ -630,7 +624,7 @@ def add_power_axis(ax, offset=60):
     ax_pow.set_ylabel("Puissance (W)")
     return ax_pow
 
-def compute_pace_series_plot(df):
+def compute_pace_series_from_speed_smooth(df):
     if "speed_smooth" not in df.columns:
         return None
     speed = df["speed_smooth"].astype(float).replace([np.inf, -np.inf], np.nan)
@@ -642,9 +636,9 @@ def compute_pace_series_plot(df):
 def plot_multi_signals(ax, df, t0=0.0, who="T1",
                        show_fc=True, show_pace=False, show_power=False,
                        linewidth=1.8):
-    if who == "T1":
+    if who.startswith("T1"):
         c_fc, c_pace, c_pow = COLOR_RED_T1, COLOR_BLUE_T1, COLOR_ORANGE_T1
-    elif who == "T2":
+    elif who.startswith("T2"):
         c_fc, c_pace, c_pow = COLOR_RED_T2, COLOR_BLUE_T2, COLOR_ORANGE_T2
     else:
         c_fc, c_pace, c_pow = COLOR_RED_SES, COLOR_BLUE_SES, COLOR_ORANGE_SES
@@ -658,7 +652,7 @@ def plot_multi_signals(ax, df, t0=0.0, who="T1",
         ax.set_ylabel("FC (bpm)")
 
     if show_pace and "speed_smooth" in df.columns:
-        pace_series = compute_pace_series_plot(df)
+        pace_series = compute_pace_series_from_speed_smooth(df)
         if pace_series is not None:
             ax_pace = add_pace_axis(ax)
             ax_pace.plot(tt, pace_series, color=c_pace, linewidth=linewidth, label=f"{who} • Allure (min/km)")
@@ -672,7 +666,6 @@ def plot_multi_signals(ax, df, t0=0.0, who="T1",
 # ========================= APP PRINCIPALE ==============================
 
 st.title("🏃‍♂️ Analyse de Tests d'Endurance + Vitesse Critique (Export PDF)")
-
 tabs = st.tabs(["🧪 Tests d'endurance", "⚙️ Analyse entraînement"])
 
 if "active_tab" not in st.session_state:
@@ -701,10 +694,15 @@ with tabs[0]:
     st.markdown(f"### Nombre de tests sélectionnés : **{st.session_state.nb_tests}**")
 
     tests_data = []
-    VC_kmh = None
-    D_prime = None
-    A = None
-    k_log = None
+    VC_kmh_raw = None
+    VC_kmh_ideal = None
+    D_prime_raw = None
+    D_prime_ideal = None
+
+    A_raw = None
+    k_log_raw = None
+    A_ideal = None
+    k_log_ideal = None
 
     n = st.session_state.nb_tests
     indices = list(range(1, n + 1))
@@ -767,7 +765,7 @@ with tabs[0]:
                 try:
                     start_sec = parse_time_to_seconds(start_str)
                     end_sec = parse_time_to_seconds(end_str)
-                except:
+                except Exception:
                     st.error("Format temps invalide.")
                     st.markdown("</div>", unsafe_allow_html=True)
                     continue
@@ -779,10 +777,9 @@ with tabs[0]:
 
                 if end_sec > df["time_s"].max():
                     st.warning(f"⚠️ Fin > fichier ({df['time_s'].max():.0f}s). Limitation auto.")
-                    end_sec = df["time_s"].max()
+                    end_sec = float(df["time_s"].max())
 
                 segment = df[(df["time_s"] >= start_sec) & (df["time_s"] <= end_sec)]
-
                 if len(segment) < 10:
                     st.warning("Segment trop court pour analyse.")
                     st.markdown("</div>", unsafe_allow_html=True)
@@ -791,71 +788,66 @@ with tabs[0]:
                 # ---- ANALYSE FC ----
                 stats, drift_bpm, drift_pct = analyze_heart_rate(segment)
 
-                # ---- DISTANCE / VITESSE BRUTE ----
+                # ---- DIST / VITESSE / ALLURE BRUT ----
                 dist_m = segment_distance_m(segment)
                 t_s = float(end_sec - start_sec)
                 v_kmh = 3.6 * dist_m / t_s if t_s > 0 else 0.0
-
                 pace = format_pace_min_per_km(v_kmh)
                 pace_str = f"{int(pace[0])}:{int(pace[1]):02d} min/km" if pace else "–"
 
-                # ---- CONDITIONS (CODE 2) : D+/D- + TEMP ----
-                d_up, d_down = segment_dplus_dminus(segment)
-                temp_real = get_segment_avg_temp(segment)
+                # ---- D+ / D- ----
+                d_up, d_down = compute_dplus_dminus(segment)
 
-                v_kmh_eq = None
-                dist_eq_m = None
-                pace_eq_str = "–"
+                # ---- TEMPÉRATURE OPEN-METEO (segment) ----
+                avgT, avgW, avgH = infer_segment_weather(segment)
+                if avgT is None:
+                    avgT = float(manual_temp_fallback)
 
-                if use_conditions and v_kmh > 0 and dist_m > 0:
-                    v_kmh_eq = speed_equivalent_ideal(
-                        v_kmh_raw=v_kmh,
-                        d_up=d_up,
-                        d_down=d_down,
-                        dist_m=dist_m,
-                        temp_real=temp_real,
-                        k_up=k_up,
-                        k_down=k_down,
-                        k_temp_hot=k_temp_hot,
-                        k_temp_cold=k_temp_cold,
-                        opt_temp=opt_temp
-                    )
-                    if v_kmh_eq is not None and v_kmh > 0:
-                        dist_eq_m = dist_m * (v_kmh_eq / v_kmh)
-                        pace_eq = format_pace_min_per_km(v_kmh_eq)
-                        pace_eq_str = f"{int(pace_eq[0])}:{int(pace_eq[1]):02d} min/km" if pace_eq else "–"
+                # ---- RECALIBRAGE CONDITIONS IDÉALES (temps et vitesse) ----
+                t_ideal = recalibrate_time_to_ideal(t_s, dist_m, d_up, d_down, avgT) if (USE_RECAL := True) else None
+                if t_ideal is None or t_ideal <= 0:
+                    v_kmh_ideal = None
+                    pace_ideal_str = "–"
                 else:
-                    dist_eq_m = dist_m
+                    v_kmh_ideal = 3.6 * dist_m / t_ideal
+                    pace_ideal = format_pace_min_per_km(v_kmh_ideal)
+                    pace_ideal_str = f"{int(pace_ideal[0])}:{int(pace_ideal[1]):02d} min/km" if pace_ideal else "–"
 
                 # ---- CINÉTIQUE VITESSE ----
                 d_v_kmh, d_v_pct = analyze_speed_kinetics(segment)
 
+                # ---- TABLEAU ----
                 df_table = pd.DataFrame({
                     "Métrique": [
                         "FC moyenne (bpm)", "FC max (bpm)",
                         "Dérive FC (bpm/min)", "Dérive FC (%/min)",
                         "Dérive vitesse (km/h/min)", "Dérive vitesse (%/min)",
-                        "Durée segment (s)", "Distance (m)",
-                        "Vitesse (km/h)", "Allure (min/km)",
-                        "D+ (m)", "D- (m)", "Température moy (°C)",
-                        "Vitesse équivalente (km/h)", "Allure équivalente (min/km)",
-                        "Distance équivalente (m)"
+                        "Durée segment BRUT (s)",
+                        "Distance (m)",
+                        "Vitesse BRUT (km/h)", "Allure BRUT (min/km)",
+                        "D+ (m)", "D- (m)",
+                        "Temp moyenne (°C)",
+                        "Durée IDEAL (s)",
+                        "Vitesse IDEAL (km/h)",
+                        "Allure IDEAL (min/km)",
                     ],
                     "Valeur": [
                         stats["FC moyenne (bpm)"], stats["FC max (bpm)"],
                         drift_bpm, drift_pct,
                         d_v_kmh, d_v_pct,
-                        t_s, round(dist_m, 1),
+                        round(t_s, 1),
+                        round(dist_m, 1),
                         round(v_kmh, 2), pace_str,
                         round(d_up, 1), round(d_down, 1),
-                        (round(temp_real, 2) if temp_real is not None else None),
-                        (round(v_kmh_eq, 2) if v_kmh_eq is not None else None),
-                        pace_eq_str,
-                        (round(dist_eq_m, 1) if dist_eq_m is not None else None)
+                        round(float(avgT), 2) if avgT is not None else None,
+                        round(t_ideal, 1) if t_ideal is not None else None,
+                        round(v_kmh_ideal, 2) if v_kmh_ideal is not None else None,
+                        pace_ideal_str
                     ]
                 })
                 st.dataframe(df_table, hide_index=True, use_container_width=True)
 
+                # ---- GRAPHIQUE ----
                 fig, ax = plt.subplots(figsize=(9, 4.6))
                 plot_multi_signals(
                     ax, segment, t0=start_sec, who=f"T{i}",
@@ -889,15 +881,15 @@ with tabs[0]:
                     "d_v_kmh": d_v_kmh,
                     "d_v_pct": d_v_pct,
                     "dist_m": dist_m,
-                    "dist_eq_m": (dist_eq_m if dist_eq_m is not None else dist_m),
-                    "t_s": t_s,
-                    "v_kmh": v_kmh,
-                    "v_kmh_eq": v_kmh_eq,
+                    "t_s_raw": t_s,
+                    "t_s_ideal": t_ideal,
+                    "v_kmh_raw": v_kmh,
+                    "v_kmh_ideal": v_kmh_ideal,
+                    "pace_raw": pace_str,
+                    "pace_ideal": pace_ideal_str,
                     "d_up": d_up,
                     "d_down": d_down,
-                    "temp_real": temp_real,
-                    "pace_str": pace_str,
-                    "pace_eq_str": pace_eq_str,
+                    "avg_temp": avgT,
                     "date": test_date,
                 })
 
@@ -907,7 +899,7 @@ with tabs[0]:
             cols = st.columns(2)
 
     # ============================================================
-    # =============== GRAPHIQUE COMBINÉ DES TESTS =================
+    # GRAPHIQUE COMBINÉ
     # ============================================================
     st.markdown('<div class="report-card">', unsafe_allow_html=True)
     st.subheader("📊 Graphique combiné — FC / Allure / Puissance")
@@ -946,173 +938,138 @@ with tabs[0]:
     st.markdown('</div>', unsafe_allow_html=True)
 
     # ============================================================
-    # ===================== VITESSE CRITIQUE ======================
+    # VC BRUTE + VC CONDITIONS IDÉALES
     # ============================================================
     st.markdown('<div class="report-card">', unsafe_allow_html=True)
     st.subheader("⚙️ Modèle Hyperbolique — Vitesse Critique (VC)")
 
-    valid_tests = [t for t in tests_data if t["dist_eq_m"] > 0 and t["t_s"] > 0]
+    valid_raw = [t for t in tests_data if t["dist_m"] > 0 and t["t_s_raw"] and t["t_s_raw"] > 0]
+    valid_ideal = [t for t in tests_data if t["dist_m"] > 0 and t["t_s_ideal"] and t["t_s_ideal"] > 0]
 
-    if len(valid_tests) >= 2:
-        D = np.array([t["dist_eq_m"] for t in valid_tests])  # DISTANCE ÉQUIVALENTE
-        T = np.array([t["t_s"] for t in valid_tests])
-
+    # --- VC BRUTE ---
+    if len(valid_raw) >= 2:
+        D = np.array([t["dist_m"] for t in valid_raw])
+        T = np.array([t["t_s_raw"] for t in valid_raw])
         slope, intercept = np.polyfit(T, D, 1)
-        VC_m_s = slope
-        D_prime = float(intercept)
-        VC_kmh = VC_m_s * 3.6
+        VC_m_s_raw = float(slope)
+        D_prime_raw = float(intercept)
+        VC_kmh_raw = VC_m_s_raw * 3.6
+    else:
+        VC_kmh_raw = None
+        D_prime_raw = None
 
-        if VC_kmh > 0:
-            pace_min_km = 60.0 / VC_kmh
+    # --- VC IDEAL ---
+    if len(valid_ideal) >= 2:
+        D2 = np.array([t["dist_m"] for t in valid_ideal])
+        T2 = np.array([t["t_s_ideal"] for t in valid_ideal])
+        slope2, intercept2 = np.polyfit(T2, D2, 1)
+        VC_m_s_ideal = float(slope2)
+        D_prime_ideal = float(intercept2)
+        VC_kmh_ideal = VC_m_s_ideal * 3.6
+    else:
+        VC_kmh_ideal = None
+        D_prime_ideal = None
+
+    # Affichage
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("### 📌 VC BRUTE")
+        if VC_kmh_raw:
+            pace_min_km = 60.0 / VC_kmh_raw
             total_pace_s = int(round(pace_min_km * 60))
             pm = total_pace_s // 60
             ps = total_pace_s % 60
-            vc_pace_str = f"{pm}:{ps:02d} min/km"
+            st.success(
+                f"**VC brute = {VC_kmh_raw:.2f} km/h**  \n"
+                f"➡️ **{pm}:{ps:02d} min/km**  \n"
+                f"**D′ brut = {D_prime_raw:.1f} m**"
+            )
         else:
-            vc_pace_str = "–"
+            st.info("Au moins 2 tests valides requis (BRUT).")
 
-        st.success(
-            f"**VC (conditions idéales) = {VC_kmh:.2f} km/h**  \n"
-            f"➡️ soit **{vc_pace_str}**  \n"
-            f"**D′ = {D_prime:.1f} m**  \n"
-            f"(Régression hyperbolique sur {len(valid_tests)} tests)"
-        )
-    else:
-        st.info("Il faut au moins deux tests valides (distance & durée) pour calculer la VC.")
+    with c2:
+        st.markdown("### 🔧 VC CONDITIONS IDÉALES")
+        if VC_kmh_ideal:
+            pace_min_km = 60.0 / VC_kmh_ideal
+            total_pace_s = int(round(pace_min_km * 60))
+            pm = total_pace_s // 60
+            ps = total_pace_s % 60
+            st.success(
+                f"**VC idéale = {VC_kmh_ideal:.2f} km/h**  \n"
+                f"➡️ **{pm}:{ps:02d} min/km**  \n"
+                f"**D′ idéal = {D_prime_ideal:.1f} m**"
+            )
+        else:
+            st.info("Au moins 2 tests valides requis (IDÉAL).")
 
+    st.caption("VC idéale : recalibrage (plat + 12°C) basé sur D+ / D- et température Open-Meteo, comme ton code 2.")
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # ===================== MODÈLE POWER LAW ======================
+    # ============================================================
+    # POWER LAW BRUT + IDEAL
+    # ============================================================
     st.markdown('<div class="report-card">', unsafe_allow_html=True)
-    st.subheader("📈 Modèle Power Law (T = A · V^{-k})")
+    st.subheader("📈 Modèle Power Law (T = A · V^{-k}) — Brut vs Idéal")
 
-    if len(valid_tests) >= 2:
-        V = np.array([t["dist_eq_m"] / t["t_s"] for t in valid_tests if t["t_s"] > 0])
-        TT = np.array([t["t_s"] for t in valid_tests if t["t_s"] > 0])
-
-        positive_mask = V > 0
-        V = V[positive_mask]
-        TT = TT[positive_mask]
-
+    # --- Fit brut ---
+    if len(valid_raw) >= 2:
+        V = np.array([t["dist_m"] / t["t_s_raw"] for t in valid_raw if t["t_s_raw"] > 0])
+        TT = np.array([t["t_s_raw"] for t in valid_raw if t["t_s_raw"] > 0])
+        msk = V > 0
+        V, TT = V[msk], TT[msk]
         if len(V) >= 2:
             X = np.log(V)
             Y = np.log(TT)
-
             slope_pl, intercept_pl = np.polyfit(X, Y, 1)
-            k_log = -slope_pl
-            A = float(np.exp(intercept_pl))
-
-            st.write(f"**k = {k_log:.3f}**, **A = {A:.2f}** (modèle Power Law)")
+            k_log_raw = float(-slope_pl)
+            A_raw = float(np.exp(intercept_pl))
         else:
-            st.info("Pas assez de vitesses positives pour ajuster le modèle Power Law.")
+            k_log_raw, A_raw = None, None
     else:
-        st.info("Au moins 2 tests requis pour le modèle Power Law.")
+        k_log_raw, A_raw = None, None
+
+    # --- Fit idéal ---
+    if len(valid_ideal) >= 2:
+        V2 = np.array([t["dist_m"] / t["t_s_ideal"] for t in valid_ideal if t["t_s_ideal"] > 0])
+        TT2 = np.array([t["t_s_ideal"] for t in valid_ideal if t["t_s_ideal"] > 0])
+        msk2 = V2 > 0
+        V2, TT2 = V2[msk2], TT2[msk2]
+        if len(V2) >= 2:
+            X2 = np.log(V2)
+            Y2 = np.log(TT2)
+            slope_pl2, intercept_pl2 = np.polyfit(X2, Y2, 1)
+            k_log_ideal = float(-slope_pl2)
+            A_ideal = float(np.exp(intercept_pl2))
+        else:
+            k_log_ideal, A_ideal = None, None
+    else:
+        k_log_ideal, A_ideal = None, None
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("### Brut")
+        if k_log_raw is not None and A_raw is not None:
+            st.write(f"**k = {k_log_raw:.3f}**, **A = {A_raw:.2f}**")
+        else:
+            st.info("Pas assez de données brut pour ajuster Power Law.")
+
+    with c2:
+        st.markdown("### Idéal (plat + 12°C)")
+        if k_log_ideal is not None and A_ideal is not None:
+            st.write(f"**k = {k_log_ideal:.3f}**, **A = {A_ideal:.2f}**")
+        else:
+            st.info("Pas assez de données idéal pour ajuster Power Law.")
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # =============== TABLEAU PRÉDICTIF (CHOIX DU MODÈLE) =========
-    st.markdown('<div class="report-card">', unsafe_allow_html=True)
-    st.subheader("📊 Prédictions selon intensité")
-
-    model_choice = st.radio(
-        "Choisir le modèle utilisé pour le tableau :",
-        ("Modèle Power Law (<100% VC)", "Modèle D′ (>100% VC)"),
-        index=0,
-        horizontal=True
-    )
-
-    VC_ms = VC_kmh / 3.6 if (VC_kmh is not None and VC_kmh > 0) else None
-
-    if model_choice.startswith("Modèle Power"):
-
-        if VC_ms is not None and A is not None and k_log is not None:
-            pourcentages = list(range(80, 100, 2))
-            rows = []
-
-            for p in pourcentages:
-                v_kmh = VC_kmh * (p / 100.0)
-                v_ms = v_kmh / 3.6
-                if v_ms <= 0:
-                    continue
-
-                Tlim = A * (v_ms ** (-k_log))
-                if Tlim <= 0 or not math.isfinite(Tlim):
-                    continue
-
-                m = int(Tlim // 60)
-                s = int(Tlim % 60)
-                T_str = f"{m}:{s:02d}"
-
-                pace_min = 60.0 / v_kmh
-                sec = int(round(pace_min * 60))
-                pm, ps = sec // 60, sec % 60
-                pace_str = f"{pm}:{ps:02d}"
-
-                rows.append({
-                    "% VC": f"{p}%",
-                    "Modèle": "Power Law",
-                    "Temps limite (mm:ss)": T_str,
-                    "Allure (min/km)": pace_str
-                })
-
-            if rows:
-                st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
-            else:
-                st.info("Aucune prédiction exploitable avec le modèle Power Law (paramètres invalides).")
-        else:
-            st.info("⚠️ Impossible : paramètres Power Law (A, k) ou VC non disponibles.")
-
-    else:
-        if VC_ms is not None and D_prime is not None and D_prime > 0:
-            pourcentages = list(range(102, 132, 2))
-            rows = []
-
-            for p in pourcentages:
-                v_kmh = VC_kmh * (p / 100.0)
-                v_ms = v_kmh / 3.6
-
-                denom = v_ms - VC_ms
-                if denom <= 0:
-                    continue
-
-                Tlim = D_prime / denom
-                if Tlim <= 0 or not math.isfinite(Tlim):
-                    continue
-
-                m = int(Tlim // 60)
-                s = int(Tlim % 60)
-                T_str = f"{m}:{s:02d}"
-
-                pace_min = 60.0 / v_kmh
-                sec = int(round(pace_min * 60))
-                pm, ps = sec // 60, sec % 60
-                pace_str = f"{pm}:{ps:02d}"
-
-                rows.append({
-                    "% VC": f"{p}%",
-                    "Modèle": "D′",
-                    "Temps limite (mm:ss)": T_str,
-                    "Allure (min/km)": pace_str
-                })
-
-            if rows:
-                st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
-            else:
-                st.info("Aucune prédiction exploitable avec le modèle D′ (paramètres invalides).")
-        else:
-            st.info("⚠️ Impossible : VC ou D′ non disponible pour le modèle D′.")
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
     # ============================================================
-    # ====================== INDEX CINÉTIQUE ======================
+    # INDEX CINÉTIQUE
     # ============================================================
     st.markdown('<div class="report-card">', unsafe_allow_html=True)
     st.subheader("⚙️ Index de Cinétique (sélection tests)")
 
     if len(tests_data) >= 2:
         test_names = [f"Test {t['i']}" for t in tests_data]
-
         colA_sel, colB_sel = st.columns(2)
         with colA_sel:
             sel_a = st.selectbox("Test court", test_names, key="ic_a")
@@ -1140,7 +1097,7 @@ with tabs[0]:
     st.markdown('</div>', unsafe_allow_html=True)
 
     # ============================================================
-    # ========================== EXPORT PDF ========================
+    # EXPORT PDF
     # ============================================================
     st.markdown('<div class="report-card">', unsafe_allow_html=True)
     st.subheader("📄 Export PDF — Rapport complet des tests")
@@ -1154,7 +1111,6 @@ with tabs[0]:
             for t in tests_data:
                 seg = t["segment"]
                 t0 = seg["time_s"].iloc[0]
-
                 plot_multi_signals(
                     axG, seg, t0=t0, who=f"T{t['i']}",
                     show_fc=True,
@@ -1190,7 +1146,6 @@ with tabs[0]:
             ax_i.set_title(f"Test {t['i']} — {t['date']}")
             ax_i.set_xlabel("Temps segment (s)")
             ax_i.grid(True, alpha=0.2)
-
             figs_export.append(fig_i)
 
         pdf_buffer = fig_to_pdf_bytes(figs_export)
@@ -1226,7 +1181,7 @@ with tabs[1]:
         try:
             df = load_activity(uploaded_file)
             df, window, dur, pauses = smooth_hr(df)
-            st.session_state.training_session = (df, window, dur, pauses)
+            st.session_state.training_session = (df, window, dur, pauses, uploaded_file.name)
         except Exception as e:
             st.error(f"Erreur chargement séance : {e}")
 
@@ -1234,11 +1189,14 @@ with tabs[1]:
         st.info("Importe une séance pour commencer l’analyse.")
         st.stop()
 
-    df, window, dur, pauses = st.session_state.training_session
+    df, window, dur, pauses, fname = st.session_state.training_session
 
-    st.markdown(f"### 📂 Séance importée : **{uploaded_file.name}**")
+    st.markdown(f"### 📂 Séance importée : **{fname}**")
     st.caption(f"Durée totale : {dur:.1f}s • Lissage : {window}s • Pauses détectées : {pauses}")
 
+    # ---------------------------------------------------------------
+    # 1) DÉFINITION DES INTERVALLES
+    # ---------------------------------------------------------------
     st.markdown("## 📏 Définition des intervalles")
 
     for i, (start_s, end_s) in enumerate(st.session_state.training_intervals):
@@ -1262,17 +1220,20 @@ with tabs[1]:
                 st.rerun()
 
         try:
-            s_sec = parse_time_to_seconds(s_str)
-            e_sec = parse_time_to_seconds(e_str)
+            s_sec = parse_time_to_seconds(s_str if ":" in s_str else f"0:{s_str}")
+            e_sec = parse_time_to_seconds(e_str if ":" in e_str else f"0:{e_str}")
             if e_sec > s_sec:
                 st.session_state.training_intervals[i] = (s_sec, e_sec)
-        except:
+        except Exception:
             st.warning(f"⛔ Format invalide intervalle {i+1}")
 
     if st.button("➕ Ajouter un intervalle", key="tr_add_int"):
         st.session_state.training_intervals.append((0, 300))
         st.rerun()
 
+    # ---------------------------------------------------------------
+    # 2) ANALYSE DES INTERVALLES
+    # ---------------------------------------------------------------
     st.markdown("## 🔍 Analyse des intervalles")
 
     interval_segments = []
@@ -1284,42 +1245,40 @@ with tabs[1]:
 
         interval_segments.append((i+1, seg, s_sec, e_sec))
 
+        # --- FC ---
         stats, d_bpm, d_pct = analyze_heart_rate(seg)
 
+        # --- Distance/vitesse brut ---
         dist_m = segment_distance_m(seg)
-        t_s = e_sec - s_sec
-        v_kmh = 3.6 * dist_m / t_s if t_s > 0 else 0
+        t_s = float(e_sec - s_sec)
+        v_kmh = 3.6 * dist_m / t_s if t_s > 0 else 0.0
         pace = format_pace_min_per_km(v_kmh)
         pace_str = f"{pace[0]}:{pace[1]:02d} min/km" if pace else "–"
 
-        # --- CONDITIONS (CODE 2) sur l'intervalle ---
-        d_up, d_down = segment_dplus_dminus(seg)
-        temp_real = get_segment_avg_temp(seg)
+        # --- D+/D- ---
+        d_up, d_down = compute_dplus_dminus(seg)
 
-        v_kmh_eq = None
-        pace_eq_str = "–"
-        dist_eq_m = dist_m
+        # --- Temp (Open-Meteo) ---
+        avgT, avgW, avgH = infer_segment_weather(seg)
+        if avgT is None:
+            avgT = float(manual_temp_fallback)
 
-        if use_conditions and v_kmh > 0 and dist_m > 0:
-            v_kmh_eq = speed_equivalent_ideal(
-                v_kmh_raw=v_kmh,
-                d_up=d_up,
-                d_down=d_down,
-                dist_m=dist_m,
-                temp_real=temp_real,
-                k_up=k_up,
-                k_down=k_down,
-                k_temp_hot=k_temp_hot,
-                k_temp_cold=k_temp_cold,
-                opt_temp=opt_temp
-            )
-            if v_kmh_eq is not None and v_kmh > 0:
-                dist_eq_m = dist_m * (v_kmh_eq / v_kmh)
-                pace_eq = format_pace_min_per_km(v_kmh_eq)
-                pace_eq_str = f"{pace_eq[0]}:{pace_eq[1]:02d} min/km" if pace_eq else "–"
+        # --- Recalibrage (temps/vitesse idéal) ---
+        t_ideal = recalibrate_time_to_ideal(t_s, dist_m, d_up, d_down, avgT)
+        if t_ideal and t_ideal > 0:
+            v_kmh_ideal = 3.6 * dist_m / t_ideal
+            pace_i = format_pace_min_per_km(v_kmh_ideal)
+            pace_ideal_str = f"{pace_i[0]}:{pace_i[1]:02d} min/km" if pace_i else "–"
+        else:
+            v_kmh_ideal = None
+            pace_ideal_str = "–"
 
+        # --- Cinétique vitesse ---
         d_v_kmh, d_v_pct = analyze_speed_kinetics(seg)
 
+        # -------------------------
+        # TABLEAU (BRUT + IDEAL)
+        # -------------------------
         st.markdown(f"### Intervalle {i+1} ({s_sec:.0f}s → {e_sec:.0f}s)")
         st.dataframe(pd.DataFrame({
             "Métrique": [
@@ -1328,16 +1287,15 @@ with tabs[1]:
                 "Dérive FC (%/min)",
                 "Dérive vitesse (km/h/min)",
                 "Dérive vitesse (%/min)",
-                "Durée (s)",
+                "Durée BRUT (s)",
                 "Distance (m)",
-                "Vitesse (km/h)",
-                "Allure",
-                "D+ (m)",
-                "D- (m)",
-                "Température moy (°C)",
-                "Vitesse équivalente (km/h)",
-                "Allure équivalente",
-                "Distance équivalente (m)"
+                "Vitesse BRUT (km/h)",
+                "Allure BRUT",
+                "D+ (m)", "D- (m)",
+                "Temp moyenne (°C)",
+                "Durée IDEAL (s)",
+                "Vitesse IDEAL (km/h)",
+                "Allure IDEAL",
             ],
             "Valeur": [
                 stats["FC moyenne (bpm)"],
@@ -1345,19 +1303,21 @@ with tabs[1]:
                 d_pct,
                 d_v_kmh,
                 d_v_pct,
-                t_s,
+                round(t_s, 1),
                 round(dist_m, 1),
                 round(v_kmh, 2),
                 pace_str,
-                round(d_up, 1),
-                round(d_down, 1),
-                (round(temp_real, 2) if temp_real is not None else None),
-                (round(v_kmh_eq, 2) if v_kmh_eq is not None else None),
-                pace_eq_str,
-                round(dist_eq_m, 1)
+                round(d_up, 1), round(d_down, 1),
+                round(float(avgT), 2) if avgT is not None else None,
+                round(t_ideal, 1) if t_ideal is not None else None,
+                round(v_kmh_ideal, 2) if v_kmh_ideal is not None else None,
+                pace_ideal_str
             ]
         }), hide_index=True, use_container_width=True)
 
+        # -------------------------
+        # GRAPHIQUE SEGMENT
+        # -------------------------
         fig, ax = plt.subplots(figsize=(9, 4.2))
         plot_multi_signals(
             ax, seg, t0=s_sec, who=f"Int{i+1}",
@@ -1369,6 +1329,9 @@ with tabs[1]:
         ax.grid(True, alpha=0.25)
         st.pyplot(fig)
 
+    # ---------------------------------------------------------------
+    # GRAPHIQUE COMBINÉ (intervalles superposés)
+    # ---------------------------------------------------------------
     if interval_segments:
         st.markdown("## 📊 Graphique combiné — tous les intervalles superposés")
         show_fc = st.checkbox("☑ FC", True, key="comb_fc_training_v2")
