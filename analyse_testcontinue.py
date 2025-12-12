@@ -130,7 +130,7 @@ def load_activity(file):
     df = df.dropna(subset=["heart_rate"]).reset_index(drop=True)
 
     # Nettoyage
-    for c in ["heart_rate","speed","enhanced_speed","power","distance","lat","lon"]:
+    for c in ["heart_rate","speed","enhanced_speed","power","distance","lat","lon","alt"]:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
 
@@ -265,6 +265,48 @@ def segment_distance_m(df_seg):
             return dist
 
     return 0.0
+
+
+def segment_elevation_gain_m(df_seg):
+    """Gain D+ sur le segment (somme des hausses d'altitude), robuste au bruit."""
+    if df_seg is None or df_seg.empty:
+        return 0.0
+    if "alt" not in df_seg.columns:
+        return 0.0
+
+    alt = pd.to_numeric(df_seg["alt"], errors="coerce").astype(float)
+    alt = alt.replace([np.inf, -np.inf], np.nan).interpolate(limit_direction="both")
+    alt = alt.rolling(5, min_periods=1, center=True).median()
+
+    d = alt.diff().fillna(0.0)
+    gain = float(d[d > 0].sum())
+    if not math.isfinite(gain):
+        return 0.0
+    return max(0.0, gain)
+
+
+def segment_grade_percent(df_seg):
+    """Pente moyenne en % = 100 * (D+ net) / distance horizontale."""
+    dist_m = segment_distance_m(df_seg)
+    if dist_m <= 0:
+        return None
+
+    if "alt" not in df_seg.columns or df_seg["alt"].dropna().empty:
+        return None
+
+    alt = pd.to_numeric(df_seg["alt"], errors="coerce").astype(float)
+    alt = alt.replace([np.inf, -np.inf], np.nan)
+    if alt.notna().sum() < 2:
+        return None
+
+    alt0 = float(alt.dropna().iloc[0])
+    alt1 = float(alt.dropna().iloc[-1])
+    deniv_net = alt1 - alt0
+
+    grade = 100.0 * (deniv_net / dist_m)
+    if not math.isfinite(grade):
+        return None
+    return float(grade)
 
 
 def format_pace_min_per_km(v_kmh):
@@ -518,6 +560,58 @@ with tabs[0]:
     A = None
     k_log = None  # pour ne pas écraser k() de python
 
+    # >>> AJOUT CONDITIONS : paramètres globaux de recalibrage (pente + température)
+    st.markdown('<div class="report-card">', unsafe_allow_html=True)
+    st.subheader("🌡️ Recalibrage des références (pente + température)")
+
+    colR1, colR2, colR3 = st.columns(3)
+    with colR1:
+        temp_ref_c = st.number_input("Température de référence (°C)", value=15.0, step=0.5, key="temp_ref")
+    with colR2:
+        temp_act_c = st.number_input("Température du test (°C)", value=15.0, step=0.5, key="temp_act")
+    with colR3:
+        temp_coef_pct_per_c = st.number_input("Impact température (% / °C)", value=0.30, step=0.05, key="temp_coef")
+
+    colR4, colR5 = st.columns(2)
+    with colR4:
+        grade_ref_pct = st.number_input("Pente de référence (%)", value=0.0, step=0.1, key="grade_ref")
+    with colR5:
+        grade_coef_pct_per_pct = st.number_input("Impact pente (% / %)", value=1.00, step=0.05, key="grade_coef")
+
+    st.caption(
+        "Principe : on calcule une *vitesse équivalente* corrigée des conditions pour comparer les tests entre eux. "
+        "Tu peux ajuster les coefficients sans toucher au reste du code."
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    def apply_conditions_correction(v_kmh_raw, grade_pct, temp_act, temp_ref, temp_coef_pct_per_c, grade_ref, grade_coef_pct_per_pct):
+        """Retourne v_kmh_eq (vitesse équivalente) corrigée pente + température.
+        Convention : si conditions plus difficiles (plus chaud / plus de pente), v_eq augmente.
+        """
+        if v_kmh_raw is None or not math.isfinite(v_kmh_raw) or v_kmh_raw <= 0:
+            return None
+
+        # Température : pénalité proportionnelle à (temp_act - temp_ref)
+        dT = float(temp_act - temp_ref)
+        temp_factor = 1.0 - (temp_coef_pct_per_c / 100.0) * dT
+
+        # Pente : pénalité proportionnelle à (grade_pct - grade_ref)
+        if grade_pct is None or not math.isfinite(grade_pct):
+            dG = 0.0
+        else:
+            dG = float(grade_pct - grade_ref)
+        grade_factor = 1.0 - (grade_coef_pct_per_pct / 100.0) * dG
+
+        # Eviter division par 0 / facteurs absurdes
+        eps = 1e-6
+        temp_factor = max(eps, temp_factor)
+        grade_factor = max(eps, grade_factor)
+
+        v_eq = v_kmh_raw / (temp_factor * grade_factor)
+        if not math.isfinite(v_eq) or v_eq <= 0:
+            return None
+        return float(v_eq)
+
     # --------- CARTES TESTS EN GRILLE (2 par ligne) ---------
     n = st.session_state.nb_tests
     indices = list(range(1, n + 1))
@@ -603,15 +697,36 @@ with tabs[0]:
 
                 # ---- ANALYSE FC ----
                 stats, drift_bpm, drift_pct = analyze_heart_rate(segment)
+
+                # >>> CORRECTION v_kmh : calcul distance robuste + pente + correction température
                 dist_m = segment_distance_m(segment)
                 t_s = float(end_sec - start_sec)
                 v_kmh = 3.6 * dist_m / t_s if t_s > 0 else 0.0
+
+                grade_pct = segment_grade_percent(segment)
+                dplus_m = segment_elevation_gain_m(segment)
+
+                v_kmh_eq = apply_conditions_correction(
+                    v_kmh_raw=v_kmh,
+                    grade_pct=grade_pct,
+                    temp_act=temp_act_c,
+                    temp_ref=temp_ref_c,
+                    temp_coef_pct_per_c=temp_coef_pct_per_c,
+                    grade_ref=grade_ref_pct,
+                    grade_coef_pct_per_pct=grade_coef_pct_per_pct
+                )
 
                 pace = format_pace_min_per_km(v_kmh)
                 if pace:
                     pace_str = f"{int(pace[0])}:{int(pace[1]):02d} min/km"
                 else:
                     pace_str = "–"
+
+                pace_eq = format_pace_min_per_km(v_kmh_eq) if v_kmh_eq is not None else None
+                if pace_eq:
+                    pace_eq_str = f"{int(pace_eq[0])}:{int(pace_eq[1]):02d} min/km"
+                else:
+                    pace_eq_str = "–"
 
                 # ---- CINÉTIQUE VITESSE ----
                 d_v_kmh, d_v_pct = analyze_speed_kinetics(segment)
@@ -622,14 +737,24 @@ with tabs[0]:
                         "Dérive FC (bpm/min)", "Dérive FC (%/min)",
                         "Dérive vitesse (km/h/min)", "Dérive vitesse (%/min)",
                         "Durée segment (s)", "Distance (m)",
-                        "Vitesse (km/h)", "Allure (min/km)"
+                        "Vitesse (km/h)", "Allure (min/km)",
+                        "Pente moyenne (%)",
+                        "D+ (m)",
+                        "Température (°C)",
+                        "Vitesse équivalente (km/h)",
+                        "Allure équivalente (min/km)"
                     ],
                     "Valeur": [
                         stats["FC moyenne (bpm)"], stats["FC max (bpm)"],
                         drift_bpm, drift_pct,
                         d_v_kmh, d_v_pct,
                         t_s, round(dist_m, 1),
-                        round(v_kmh, 2), pace_str
+                        round(v_kmh, 2), pace_str,
+                        (round(grade_pct, 3) if grade_pct is not None else None),
+                        round(dplus_m, 1),
+                        float(temp_act_c),
+                        (round(v_kmh_eq, 2) if v_kmh_eq is not None else None),
+                        pace_eq_str
                     ]
                 })
                 st.dataframe(df_table, hide_index=True, use_container_width=True)
@@ -669,7 +794,11 @@ with tabs[0]:
                     "dist_m": dist_m,
                     "t_s": t_s,
                     "v_kmh": v_kmh,
+                    "v_kmh_eq": v_kmh_eq,
+                    "grade_pct": grade_pct,
+                    "dplus_m": dplus_m,
                     "pace_str": pace_str,
+                    "pace_eq_str": pace_eq_str,
                     "date": test_date,
                 })
 
@@ -677,7 +806,7 @@ with tabs[0]:
 
         if idx % 2 == 1 and idx < len(indices) - 1:
             cols = st.columns(2)
-  
+
     # ============================================================
     # =============== GRAPHIQUE COMBINÉ DES TESTS =================
     # ============================================================
@@ -723,6 +852,7 @@ with tabs[0]:
     st.markdown('<div class="report-card">', unsafe_allow_html=True)
     st.subheader("⚙️ Modèle Hyperbolique — Vitesse Critique (VC)")
 
+    # >>> AJOUT : utiliser la vitesse équivalente si disponible pour la calibration
     valid_tests = [t for t in tests_data if t["dist_m"] > 0 and t["t_s"] > 0]
 
     if len(valid_tests) >= 2:
@@ -754,12 +884,11 @@ with tabs[0]:
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-      # ===================== MODÈLE POWER LAW ======================
+    # ===================== MODÈLE POWER LAW ======================
     st.markdown('<div class="report-card">', unsafe_allow_html=True)
     st.subheader("📈 Modèle Power Law (T = A · V^{-k})")
 
     if len(valid_tests) >= 2:
-        # V = vitesse moyenne sur chaque test (m/s)
         V = np.array([t["dist_m"] / t["t_s"] for t in valid_tests if t["t_s"] > 0])
         TT = np.array([t["t_s"] for t in valid_tests if t["t_s"] > 0])
 
@@ -768,12 +897,11 @@ with tabs[0]:
         TT = TT[positive_mask]
 
         if len(V) >= 2:
-            # log(T) = log(A) - k · log(V)
             X = np.log(V)
             Y = np.log(TT)
 
             slope_pl, intercept_pl = np.polyfit(X, Y, 1)
-            k_log = -slope_pl          # k > 0
+            k_log = -slope_pl
             A = float(np.exp(intercept_pl))
 
             st.write(f"**k = {k_log:.3f}**, **A = {A:.2f}** (modèle Power Law)")
@@ -784,11 +912,10 @@ with tabs[0]:
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-      # =============== TABLEAU PRÉDICTIF (CHOIX DU MODÈLE) =========
+    # =============== TABLEAU PRÉDICTIF (CHOIX DU MODÈLE) =========
     st.markdown('<div class="report-card">', unsafe_allow_html=True)
     st.subheader("📊 Prédictions selon intensité")
 
-    # Choix du modèle : soit Power Law (<100% VC), soit D′ (>100% VC)
     model_choice = st.radio(
         "Choisir le modèle utilisé pour le tableau :",
         ("Modèle Power Law (<100% VC)", "Modèle D′ (>100% VC)"),
@@ -798,12 +925,10 @@ with tabs[0]:
 
     VC_ms = VC_kmh / 3.6 if (VC_kmh is not None and VC_kmh > 0) else None
 
-    # ---------- CAS 1 : POWER LAW (<100% VC) ----------
     if model_choice.startswith("Modèle Power"):
 
         if VC_ms is not None and A is not None and k_log is not None:
 
-            # Par exemple : 80 → 98 % VC
             pourcentages = list(range(80, 100, 2))
             rows = []
 
@@ -813,7 +938,6 @@ with tabs[0]:
                 if v_ms <= 0:
                     continue
 
-                # T = A · V^{-k}
                 Tlim = A * (v_ms ** (-k_log))
 
                 if Tlim <= 0 or not math.isfinite(Tlim):
@@ -844,12 +968,10 @@ with tabs[0]:
         else:
             st.info("⚠️ Impossible : paramètres Power Law (A, k) ou VC non disponibles.")
 
-    # ---------- CAS 2 : D′ (>100% VC) ----------
     else:
 
         if VC_ms is not None and D_prime is not None and D_prime > 0:
 
-            # Par exemple : 102 → 130 % VC
             pourcentages = list(range(102, 132, 2))
             rows = []
 
@@ -861,7 +983,6 @@ with tabs[0]:
                 if denom <= 0:
                     continue
 
-                # T = D′ / (v - VC)
                 Tlim = D_prime / denom
 
                 if Tlim <= 0 or not math.isfinite(Tlim):
@@ -893,7 +1014,7 @@ with tabs[0]:
             st.info("⚠️ Impossible : VC ou D′ non disponible pour le modèle D′.")
 
     st.markdown("</div>", unsafe_allow_html=True)
-  
+
     # ============================================================
     # ====================== INDEX CINÉTIQUE ======================
     # ============================================================
