@@ -35,24 +35,67 @@ COLOR_ORANGE_SES = "#ffb84d"
 COLOR_GREY = "#6b7280"
 
 st.markdown(
-    """
+    f"""
 <style>
-.report-card {
+
+/* ========================= CARDS ========================= */
+.report-card {{
   padding: 1rem 1.2rem;
   border-radius: 14px;
   border: 1px solid rgba(0,0,0,0.08);
   background: linear-gradient(180deg, #ffffff 0%, #fafafa 100%);
   box-shadow: 0 6px 18px rgba(0,0,0,0.06);
   margin-bottom: 0.8rem;
-}
-.table-box {
-  border: 1px solid rgba(0,0,0,0.06);
-  border-radius: 10px;
-  padding: 0.4rem 0.6rem;
-  background: #fff;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.04);
-}
-.block-container { padding-top: 1.4rem; }
+}}
+
+/* ========================= DATAFRAME CONTAINER ========================= */
+div[data-testid="stDataFrame"] {{
+  border-radius: 12px;
+  overflow: hidden;
+}}
+
+/* ========================= TABLE CELLS ========================= */
+div[data-testid="stDataFrame"] td {{
+  font-size: 0.92rem;
+  font-weight: 500;
+  padding: 6px 10px;
+}}
+
+/* ========================= TABLE ROW TYPES ========================= */
+.tr-raw td {{
+  background-color: {COLOR_RED_T2};
+  color: white;
+}}
+
+.tr-ideal td {{
+  background-color: {COLOR_BLUE_T2};
+  color: white;
+}}
+
+.tr-general td {{
+  background-color: {COLOR_GREY};
+  color: white;
+}}
+
+/* ========================= ROW SEPARATION ========================= */
+.tr-raw td,
+.tr-ideal td,
+.tr-general td {{
+  border-bottom: 1px solid rgba(255,255,255,0.25);
+}}
+
+/* ========================= HEADER ========================= */
+div[data-testid="stDataFrame"] th {{
+  background-color: #f3f4f6;
+  color: #111827;
+  font-weight: 600;
+  border-bottom: 2px solid #e5e7eb;
+}}
+
+.block-container {{
+  padding-top: 1.4rem;
+}}
+
 </style>
 """,
     unsafe_allow_html=True,
@@ -751,23 +794,27 @@ def _blend(hex_color, mix_with="#ffffff", alpha=0.75):
     b = int(alpha * b1 + (1 - alpha) * b2)
     return f"#{r:02x}{g:02x}{b:02x}"
 
-
 def style_metrics_table(df_table: pd.DataFrame):
-    fc_bg = _blend(COLOR_RED_T1, alpha=0.18)
-    real_bg = _blend(COLOR_BLUE_T1, alpha=0.14)
-    recal_bg = _blend(COLOR_ORANGE_T1, alpha=0.16)
 
-    def row_style(row):
-        m = str(row.get("Métrique", ""))
-        if "FC" in m:
-            return [f"background-color: {fc_bg};"] * len(row)
-        if "recalibrée" in m:
-            return [f"background-color: {recal_bg};"] * len(row)
-        if "réelle" in m:
-            return [f"background-color: {real_bg};"] * len(row)
-        return [""] * len(row)
+    def row_class(row):
+        m = str(row.get("Métrique", "")).lower()
 
-    return df_table.style.apply(row_style, axis=1)
+        if "réelle" in m or "brute" in m:
+            return "tr-raw"
+
+        if "recalibrée" in m or "idéale" in m:
+            return "tr-ideal"
+
+        return "tr-general"
+
+    classes = pd.DataFrame(
+        [[row_class(row)] * len(df_table.columns) for _, row in df_table.iterrows()],
+        index=df_table.index,
+        columns=df_table.columns,
+    )
+
+    return df_table.style.set_td_classes(classes)
+
 
 
 # ========================= POWER LAW + %VC =========================
