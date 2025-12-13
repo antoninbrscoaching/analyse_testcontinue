@@ -123,6 +123,32 @@ def get_avg_weather_for_period(lat, lon, start_dt, end_dt):
     except Exception:
         return None, None, None
 
+def get_segment_weather(segment_df):
+    """
+    Retourne (température moyenne, vent moyen, humidité moyenne)
+    pour un segment DataFrame.
+    """
+    try:
+        if segment_df is None or segment_df.empty:
+            return None, None, None
+
+        # GPS requis
+        if "lat" not in segment_df.columns or "lon" not in segment_df.columns:
+            return None, None, None
+
+        lat = segment_df["lat"].dropna().iloc[0]
+        lon = segment_df["lon"].dropna().iloc[0]
+
+        if not np.isfinite(lat) or not np.isfinite(lon):
+            return None, None, None
+
+        start_dt = segment_df["timestamp"].iloc[0]
+        end_dt = segment_df["timestamp"].iloc[-1]
+
+        return get_avg_weather_for_period(lat, lon, start_dt, end_dt)
+
+    except Exception:
+        return None, None, None
 
 # ========================= LECTURE FICHIERS ==============================
 def _fit_semicircles_to_deg(x):
