@@ -2066,32 +2066,27 @@ with main_tabs[1]:
                 df, window, total_dur, pauses = smooth_hr(df)
                 st.caption(f"Durée : {total_dur:.1f}s · Lissage : {window}s · Pauses : {pauses}")
 
-                col_start, col_end = st.columns(2)
-                with col_start:
-                    start_str = st.text_input(f"Début (hh:mm:ss) — Test {i}", value="0:00:00", key=f"c2_start_{i}")
-                with col_end:
-                    end_str = st.text_input(f"Fin (hh:mm:ss) — Test {i}", value="0:12:00", key=f"c2_end_{i}")
-
-                try:
-                    start_sec = parse_time_to_seconds(start_str)
-                    end_sec   = parse_time_to_seconds(end_str)
-                except Exception:
-                    st.error("Format temps invalide. Exemple: 0:12:00 ou 12:30 ou 90")
-                    st.markdown("</div>", unsafe_allow_html=True)
-                    if idx % 2 == 1 and idx < len(indices) - 1:
-                        cols = st.columns(2)
-                    continue
+                dur_int = max(2, int(total_dur))
+                default_end = min(720, dur_int - 1)
+                start_sec = st.slider(
+                    f"▶️ Début du test {i} (s)", 0, dur_int - 1, 0,
+                    key=f"c2_start_{i}",
+                    help="Glisse pour choisir le début du segment analysé"
+                )
+                end_sec = st.slider(
+                    f"⏹️ Fin du test {i} (s)", 1, dur_int,
+                    min(default_end, dur_int),
+                    key=f"c2_end_{i}",
+                    help="Glisse pour choisir la fin du segment analysé"
+                )
+                st.caption(f"Segment sélectionné : **{seconds_to_hms(start_sec)}** → **{seconds_to_hms(end_sec)}**  ({end_sec - start_sec}s)")
 
                 if end_sec <= start_sec:
-                    st.error("Fin doit être > début")
+                    st.error("La fin doit être > au début.")
                     st.markdown("</div>", unsafe_allow_html=True)
                     if idx % 2 == 1 and idx < len(indices) - 1:
                         cols = st.columns(2)
                     continue
-
-                if end_sec > df["time_s"].max():
-                    st.warning(f"⚠️ Fin > fichier ({df['time_s'].max():.0f}s). Limitation auto.")
-                    end_sec = int(df["time_s"].max())
 
                 segment = df[(df["time_s"] >= start_sec) & (df["time_s"] <= end_sec)]
                 if len(segment) < 10:
@@ -2399,32 +2394,33 @@ with main_tabs[2]:
         st.markdown(f"### 📂 Séance importée : **{filename}**")
         st.caption(f"Durée totale : {dur:.1f}s · Lissage : {window}s · Pauses détectées : {pauses}")
 
+        dur_int_tr = max(2, int(dur))
         st.markdown("## 📏 Définition des intervalles")
         for i, (start_s, end_s) in enumerate(st.session_state.training_intervals):
-            c1, c2, c3 = st.columns([1, 1, 0.3])
+            st.markdown(f"**Intervalle {i+1}**")
+            c1, c2, c3 = st.columns([5, 5, 1])
             with c1:
-                s_str = st.text_input(
-                    f"Début intervalle {i+1} (hh:mm:ss)",
-                    value=hms_from_seconds_for_inputs(start_s),
+                s_sec = st.slider(
+                    f"▶️ Début intervalle {i+1} (s)",
+                    0, dur_int_tr - 1,
+                    min(int(start_s), dur_int_tr - 1),
                     key=f"tr_int_start_{i}",
                 )
             with c2:
-                e_str = st.text_input(
-                    f"Fin intervalle {i+1} (hh:mm:ss)",
-                    value=hms_from_seconds_for_inputs(end_s),
+                e_sec = st.slider(
+                    f"⏹️ Fin intervalle {i+1} (s)",
+                    1, dur_int_tr,
+                    max(min(int(end_s), dur_int_tr), s_sec + 1),
                     key=f"tr_int_end_{i}",
                 )
             with c3:
+                st.write("")
                 if st.button("🗑️", key=f"tr_del_int_{i}"):
                     st.session_state.training_intervals.pop(i)
                     st.rerun()
-            try:
-                s_sec = parse_time_to_seconds(s_str)
-                e_sec = parse_time_to_seconds(e_str)
-                if e_sec > s_sec:
-                    st.session_state.training_intervals[i] = (s_sec, e_sec)
-            except Exception:
-                st.warning(f"⛔ Format invalide intervalle {i+1} (ex: 0:05:00)")
+            st.caption(f"Segment : **{seconds_to_hms(s_sec)}** → **{seconds_to_hms(e_sec)}**  ({e_sec - s_sec}s)")
+            if e_sec > s_sec:
+                st.session_state.training_intervals[i] = (s_sec, e_sec)
 
         if st.button("➕ Ajouter un intervalle", key="tr_add_int"):
             st.session_state.training_intervals.append((0, 300))
